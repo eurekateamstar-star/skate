@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=26";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=27";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -554,11 +554,23 @@ function renderPunchCards() {
     const inR = recs.filter(r => r.type === "in")[0];
     const outR = recs.filter(r => r.type === "out").at(-1);
     const chkOf = { in: chkIn, out: chkOut };
-    const btn = (type, r, label) => `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}" ${chkOf[type].cls === "wait" ? "disabled" : ""}>
-      <span>${label}</span>${r ? `<small>已打 ${hm(r.t)}${r.outOfRange ? "・範圍外" : ""}</small>` : ""}</button>`;
-    const locLine = (chk, prefix) => `<div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(chk.text)}</div>`;
-    // 上下班地點不同：先打上班顯示上班地點；打完上班改顯示下班地點
-    const locHtml = !two ? locLine(chkIn) : inR ? locLine(chkOut, "下班") + `<div class="pc-loc done"><b>上班</b>${esc(inLoc?.name || "不限地點")}・已打卡</div>` : locLine(chkIn, "上班") + locLine(chkOut, "下班");
+    // 按鈕三種狀態：已打卡（✓ 灰底）／範圍外（灰色・申請打卡）／可打卡（彩色）
+    const btn = (type, r, label) => {
+      const chk = chkOf[type];
+      if (r) return `<button class="btn big done" data-punch="${type}" data-sid="${id}">
+        <span>✓ 已${label}</span><small>${hm(r.t)} 打卡${r.outOfRange ? "・範圍外" : ""}</small></button>`;
+      if (chk.cls === "wait") return `<button class="btn big ${type}" disabled><span>${label}</span><small>定位中…</small></button>`;
+      if (!chk.ok) return `<button class="btn big apply" data-punch="${type}" data-sid="${id}">
+        <span>${label}</span><small>不在範圍・申請打卡</small></button>`;
+      return `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}"><span>${label}</span></button>`;
+    };
+    // 地點：上下班相同顯示一行；不同時兩行都顯示，已打卡的那行標示完成
+    const locLine = (chk, prefix, loc, r) => r
+      ? `<div class="pc-loc done"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(loc?.name || "不限地點")}・已打卡 ${hm(r.t)}</div>`
+      : `<div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(chk.text)}</div>`;
+    const locHtml = two
+      ? locLine(chkIn, "上班", inLoc, inR) + locLine(chkOut, "下班", outLoc, outR)
+      : (inR && outR ? locLine(chkIn, "", inLoc, outR) : locLine(chkIn));
     return `<div class="card punch-card">
       <div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
         <div class="pc-title"><b>${esc(s.name)}</b>${time ? `<span>${time}</span>` : ""}</div>

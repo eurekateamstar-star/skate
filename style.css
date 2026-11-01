@@ -259,6 +259,10 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .pc-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .pc-btns .btn.big{height:58px;flex-direction:column;gap:0;line-height:1.2}
 .pc-btns .btn.big small{font-size:12px;font-weight:500;opacity:.9}
+.pc-btns .btn.big.done{background:var(--fill);color:var(--green-d);box-shadow:none}
+.pc-btns .btn.big.done small{color:var(--muted);opacity:1}
+.pc-btns .btn.big.apply{background:var(--fill-2);color:var(--text-2);box-shadow:none}
+.pc-btns .btn.big.apply small{color:var(--red);opacity:1}
 .pc-btns .btn.big:disabled{background:var(--fill-2);color:var(--muted);box-shadow:none;opacity:1}
 .punch-card.leave .pc-title span{color:var(--muted)}
 .empty-card{text-align:center;color:var(--muted);padding:28px}
