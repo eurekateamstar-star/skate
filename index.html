@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=29">
+  <link rel="stylesheet" href="style.css?v=30">
 </head>
 <body>
 
@@ -231,24 +231,48 @@
       <!-- 出勤報表 -->
       <section id="view-report" class="view hidden">
         <div class="view-head">
-          <h2>出勤報表</h2>
-          <input type="month" id="repMonth">
+          <div class="vh-title">
+            <h2>出勤報表</h2>
+            <div class="vh-sub">每位員工、每天、每個班別的上下班打卡細項</div>
+          </div>
+          <div class="vh-actions">
+            <input type="month" id="repMonth">
+            <button class="btn" id="csvBtn">匯出 CSV</button>
+          </div>
+        </div>
+        <div class="card rep-filter">
           <select id="repEmp"><option value="">全部員工</option></select>
-          <button class="btn small" id="csvBtn">下載 CSV</button>
+          <select id="repStatus">
+            <option value="">全部紀錄</option>
+            <option value="abn">只看異常</option>
+            <option value="late">遲到</option>
+            <option value="early">早退</option>
+            <option value="miss">未打卡</option>
+            <option value="far">地點異常</option>
+          </select>
+          <input id="repSearch" class="filter" placeholder="搜尋姓名、員編或班別">
         </div>
         <div class="card">
           <h3>月統計</h3>
           <table class="tbl">
-            <thead><tr><th>員編</th><th>姓名</th><th>出勤天數</th><th>總工時</th><th>遲到</th><th>早退</th><th>缺卡/缺勤</th><th>範圍外</th></tr></thead>
+            <thead><tr><th>員編</th><th>姓名</th><th>出勤天數</th><th>總工時</th><th>遲到</th><th>早退</th><th>未打卡</th><th>地點異常</th></tr></thead>
             <tbody id="repSum"></tbody>
           </table>
         </div>
         <div class="card">
-          <h3>每日明細</h3>
-          <table class="tbl">
-            <thead><tr><th>日期</th><th>員編</th><th>姓名</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th><th>位置</th></tr></thead>
-            <tbody id="repList"></tbody>
-          </table>
+          <h3>打卡紀錄 <span class="count" id="repCount"></span></h3>
+          <div class="rep-wrap">
+            <table class="tbl rep-tbl">
+              <thead>
+                <tr class="grp"><th colspan="4"></th><th colspan="5" class="g-in">上班打卡</th><th colspan="5" class="g-out">下班打卡</th><th></th></tr>
+                <tr><th>員編</th><th>姓名</th><th>打卡日期</th><th>班別</th>
+                  <th class="g-in">上班時間</th><th class="g-in">打卡地點</th><th class="g-in">查看地點</th><th class="g-in">地點異常原因</th><th class="g-in">出勤異常</th>
+                  <th class="g-out">下班時間</th><th class="g-out">打卡地點</th><th class="g-out">查看地點</th><th class="g-out">地點異常原因</th><th class="g-out">出勤異常</th>
+                  <th>工時</th></tr>
+              </thead>
+              <tbody id="repList"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -471,6 +495,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=29"></script>
+<script type="module" src="app.js?v=30"></script>
 </body>
 </html>

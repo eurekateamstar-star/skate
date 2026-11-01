@@ -301,6 +301,21 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .tag.warn{background:var(--orange-l);color:var(--orange-d)}
 .far-note{margin-top:4px;font-size:12px;color:var(--text-2);white-space:normal;max-width:260px}
 
+/* ---------- 出勤報表 ---------- */
+.rep-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:14px 18px}
+.rep-filter .filter{margin:0;flex:1;min-width:200px}
+.rep-wrap{overflow-x:auto;margin:0 -24px -22px;padding:0 24px 12px}
+.rep-tbl{min-width:1500px}
+.rep-tbl th,.rep-tbl td{font-size:13px;padding:10px 10px}
+.rep-tbl tr.grp th{text-align:center;font-size:12.5px;border-bottom:0;padding-bottom:4px}
+.rep-tbl th.g-in,.rep-tbl td.g-in{background:rgba(52,199,89,.05)}
+.rep-tbl th.g-out,.rep-tbl td.g-out{background:rgba(255,149,0,.05)}
+.rep-tbl tr.grp th.g-in{color:var(--green-d)}
+.rep-tbl tr.grp th.g-out{color:var(--orange-d)}
+.rep-tbl td.t{font-variant-numeric:tabular-nums;font-weight:600}
+.rep-tbl td.wrap{white-space:normal;min-width:140px;max-width:220px}
+.rep-tbl tr.abn td:first-child{box-shadow:inset 3px 0 0 var(--red)}
+
 /* ---------- 打卡地點管理 ---------- */
 .radius-in{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px}
 .radius-in input{width:80px}
@@ -536,6 +551,13 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
   .loc-map{height:260px}
   .rday{height:50px}
   .pc-btns .btn.big{height:62px;font-size:17px}
+
+  .rep-tbl{min-width:0}
+  .rep-tbl tr.grp{display:none}
+  .rep-wrap{margin:0;padding:0;overflow:visible}
+  .rep-tbl td.g-in,.rep-tbl td.g-out{background:none}
+  .rep-tbl td.wrap{max-width:none}
+  .rep-filter select{flex:1}
 
   /* 視窗 → 全螢幕抽屜 */
   .modal-mask{padding:0;align-items:flex-end}

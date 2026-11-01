@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=29";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=30";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -389,7 +389,8 @@ $("#sheetMask").onclick = closeSheet;
 
 // 手機版表格變卡片：自動把表頭文字填到每格的 data-label
 function labelTable(tbl) {
-  const heads = [...tbl.querySelectorAll("thead th")].map(th => th.textContent.trim());
+  const rows = tbl.querySelectorAll("thead tr");
+  const heads = rows.length ? [...rows[rows.length - 1].querySelectorAll("th")].map(th => th.textContent.trim()) : [];
   tbl.querySelectorAll("tbody tr").forEach(tr =>
     [...tr.children].forEach((td, i) => td.dataset.label ??= heads[i] || ""));
 }
@@ -405,7 +406,6 @@ $("#recMonth").onchange = () => loadRecords();
 $("#mySchMonth").onchange = () => loadMySchedule();
 $("#schMonth").onchange = () => loadScheduling();
 $("#repMonth").onchange = () => loadReport();
-$("#repEmp").onchange = () => renderReport();
 
 /* ================= 班別 ================= */
 async function loadShiftTypes() {
@@ -1985,15 +1985,35 @@ $("#newRosterBtn").onclick = async () => {
 
 /* ================= 出勤報表（管理者） ================= */
 let reportRows = [];
+const minOf = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+
+// 單筆打卡的細項
+function punchDetail(r, kind, plan, ds) {
+  const today = ymd(new Date()), nowHm = hm(new Date());
+  if (!r) {
+    const passed = ds < today || (ds === today && plan && nowHm > plan);
+    return { time: "", place: "", reason: "", abn: passed && plan !== undefined ? "未打卡" : "", miss: passed };
+  }
+  const t = hm(r.t);
+  const loc = locMap[r.locationId];
+  const place = loc ? `GPS（${loc.name}）` : (r.lat != null ? "GPS" : "—");
+  let abn = "", late = 0, early = 0;
+  if (plan) {
+    const diff = minOf(t) - minOf(plan);
+    if (kind === "in" && diff > 0) { abn = `遲到 ${diff} 分鐘`; late = diff; }
+    if (kind === "out" && diff < 0) { abn = `早退 ${-diff} 分鐘`; early = -diff; }
+  }
+  return { r, time: t, place, reason: r.outOfRange ? (r.reason || "範圍外") + (r.dist != null ? `（距離 ${r.dist} 公尺）` : "") : "", abn, late, early, far: !!r.outOfRange };
+}
 
 async function loadReport() {
   const month = $("#repMonth").value;
-  await loadEmployees();
+  await Promise.all([loadEmployees(), loadShiftTypes(), loadLocations()]);
   const [attSnap, schSnap] = await Promise.all([
     getDocs(query(collection(db, "attendance"), where("month", "==", month))),
     getDocs(query(collection(db, "schedules"), where("month", "==", month)))
   ]);
-  const groups = groupDaily(attSnap.docs.map(toRec));
+  const recs = attSnap.docs.map(toRec);
   const sch = {};
   schSnap.forEach(d => sch[d.id] = d.data().shiftIds || []);
 
@@ -2002,71 +2022,106 @@ async function loadReport() {
     employees.map(u => `<option value="${u.id}">${esc(u.empNo)} ${esc(u.name)}</option>`).join("");
   $("#repEmp").value = cur;
 
+  const today = ymd(new Date());
+  const byKey = {};
+  recs.forEach(r => (byKey[`${r.empId}_${r.date}`] ??= []).push(r));
   reportRows = [];
   for (const u of employees) {
     for (const d of daysOfMonth(month)) {
       const ds = ymd(d), key = `${u.id}_${ds}`;
-      const g = groups[key], ids = sch[key];
-      if (!g && !ids) continue;
-      reportRows.push({ u, date: ds, g, ids: ids || [], st: dayStatus(g, ids, ds) });
+      const dayRecs = byKey[key] || [];
+      const ids = (sch[key] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave");
+      if (ds > today && !dayRecs.length) continue;           // 未來日期不列
+      const used = new Set();
+      const addRow = (sid, list) => {
+        const s = shiftMap[sid];
+        const ins = list.filter(r => r.type === "in").sort((a, b) => a.t - b.t);
+        const outs = list.filter(r => r.type === "out").sort((a, b) => b.t - a.t);
+        const inD = punchDetail(ins[0], "in", s?.start, ds);
+        const outD = punchDetail(outs[0], "out", s?.end, ds);
+        const hrs = inD.r && outD.r && outD.r.t > inD.r.t ? (outD.r.t - inD.r.t) / 36e5 : null;
+        reportRows.push({ u, date: ds, s, sid, inD, outD, hrs });
+      };
+      ids.forEach(id => { used.add(id); addRow(id, dayRecs.filter(r => r.shiftId === id)); });
+      // 沒有對應排班的打卡（臨時班別或舊紀錄）
+      const extra = {};
+      dayRecs.filter(r => !used.has(r.shiftId)).forEach(r => (extra[r.shiftId || ""] ??= []).push(r));
+      Object.entries(extra).forEach(([sid, list]) => addRow(sid || null, list));
     }
   }
+  reportRows.sort((a, b) => b.date.localeCompare(a.date) || (a.u.empNo || "").localeCompare(b.u.empNo || "") || (a.s?.start || "").localeCompare(b.s?.start || ""));
   renderReport();
 }
 
-function renderReport() {
-  const f = $("#repEmp").value;
-  const rows = reportRows.filter(r => !f || r.u.id === f);
-
-  const sum = {};
-  rows.forEach(r => {
-    const s = sum[r.u.id] ??= { u: r.u, days: 0, hrs: 0, late: 0, early: 0, miss: 0, far: 0 };
-    s.far += [...(r.g?.ins || []), ...(r.g?.outs || [])].filter(x => x.outOfRange).length;
-    if (r.g) s.days++;
-    s.hrs += r.g?.hrs || 0;
-    r.st.forEach(([, t]) => {
-      if (t === "遲到") s.late++;
-      else if (t === "早退") s.early++;
-      else if (["缺勤", "未打上班", "未打下班"].includes(t)) s.miss++;
-    });
-  });
-  $("#repSum").innerHTML = Object.values(sum).map(s => `
-    <tr><td>${esc(s.u.empNo)}</td><td>${esc(s.u.name)}</td><td>${s.days}</td>
-    <td>${s.hrs.toFixed(2)}</td><td>${s.late}</td><td>${s.early}</td><td>${s.miss}</td><td>${s.far ? `<span class="tag warn">${s.far}</span>` : 0}</td></tr>`).join("")
-    || `<tr><td colspan="8" class="empty">本月沒有資料</td></tr>`;
-
-  $("#repList").innerHTML = rows.map(r => `
-    <tr>
-      <td>${dayLabel(r.date)}</td><td>${esc(r.u.empNo)}</td><td>${esc(r.u.name)}</td>
-      <td>${r.ids.map(id => chipHtml(id)).join(" ") || "—"}</td>
-      <td>${hms(r.g?.in) || "—"}</td><td>${hms(r.g?.out) || "—"}</td>
-      <td>${r.g?.hrs ? r.g.hrs.toFixed(2) : "—"}</td>
-      <td>${statusHtml(r.st)}${[...(r.g?.ins || []), ...(r.g?.outs || [])].filter(x => x.outOfRange).map(x =>
-        `<div class="far-note"><span class="tag warn">${x.type === "in" ? "上班" : "下班"}範圍外</span>${esc(x.reason || "")}</div>`).join("")}</td>
-      <td>${r.g?.inRec ? mapLink(r.g.inRec) : "—"}</td>
-    </tr>`).join("") || `<tr><td colspan="9" class="empty">本月沒有資料</td></tr>`;
+const isAbn = r => !!(r.inD.abn || r.outD.abn || r.inD.far || r.outD.far);
+function filteredReport() {
+  const f = $("#repEmp").value, st = $("#repStatus").value, q = $("#repSearch").value.trim().toLowerCase();
+  return reportRows.filter(r => (!f || r.u.id === f)
+    && (!q || `${r.u.name} ${r.u.empNo} ${r.s?.name || ""}`.toLowerCase().includes(q))
+    && (!st || (st === "abn" && isAbn(r)) || (st === "late" && r.inD.late) || (st === "early" && r.outD.early)
+        || (st === "miss" && (r.inD.abn === "未打卡" || r.outD.abn === "未打卡")) || (st === "far" && (r.inD.far || r.outD.far))));
 }
 
-$("#csvBtn").onclick = () => {
+function renderReport() {
+  const rows = filteredReport();
+  // 月統計（依員工篩選，不受狀態篩選影響）
   const f = $("#repEmp").value;
-  const rows = reportRows.filter(r => !f || r.u.id === f);
-  const head = ["日期", "員編", "姓名", "班別", "上班", "下班", "工時", "狀態"];
+  const sum = {};
+  reportRows.filter(r => !f || r.u.id === f).forEach(r => {
+    const s = sum[r.u.id] ??= { u: r.u, days: new Set(), hrs: 0, late: 0, early: 0, miss: 0, far: 0 };
+    if (r.inD.r || r.outD.r) s.days.add(r.date);
+    s.hrs += r.hrs || 0;
+    if (r.inD.late) s.late++;
+    if (r.outD.early) s.early++;
+    if (r.inD.abn === "未打卡") s.miss++;
+    if (r.outD.abn === "未打卡") s.miss++;
+    if (r.inD.far) s.far++;
+    if (r.outD.far) s.far++;
+  });
+  const num = (n, cls) => n ? `<span class="tag ${cls}">${n}</span>` : "0";
+  $("#repSum").innerHTML = Object.values(sum).sort((a, b) => (a.u.empNo || "").localeCompare(b.u.empNo || "")).map(s => `
+    <tr><td>${esc(s.u.empNo)}</td><td>${esc(s.u.name)}</td><td>${s.days.size}</td><td>${s.hrs.toFixed(2)}</td>
+    <td>${num(s.late, "bad")}</td><td>${num(s.early, "bad")}</td><td>${num(s.miss, "bad")}</td><td>${num(s.far, "warn")}</td></tr>`).join("")
+    || `<tr><td colspan="8" class="empty">本月沒有資料</td></tr>`;
+
+  $("#repCount").textContent = `共 ${rows.length} 筆`;
+  const cell = (x, cls, k) => `
+    <td class="${cls} t" data-label="${k}時間">${x.time || "—"}</td>
+    <td class="${cls}" data-label="${k}打卡地點">${x.place || "—"}</td>
+    <td class="${cls}" data-label="${k}查看地點">${x.r?.lat != null ? `<a href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">查看地點</a>` : "—"}</td>
+    <td class="${cls} wrap" data-label="${k}地點異常原因">${x.reason ? `<span class="tag warn">異常</span> ${esc(x.reason)}` : "—"}</td>
+    <td class="${cls}" data-label="${k}出勤異常">${x.abn ? `<span class="tag bad">${x.abn}</span>` : (x.r ? `<span class="tag ok">正常</span>` : "—")}</td>`;
+  $("#repList").innerHTML = rows.slice(0, 1500).map(r => `
+    <tr class="${isAbn(r) ? "abn" : ""}">
+      <td>${esc(r.u.empNo)}</td><td>${esc(r.u.name)}</td><td>${dayLabel(r.date)}</td>
+      <td>${r.s ? chipHtml(r.sid) : `<span class="tag">${esc(r.inD.r?.shiftName || r.outD.r?.shiftName || "未指定班別")}</span>`}</td>
+      ${cell(r.inD, "g-in", "上班")}${cell(r.outD, "g-out", "下班")}
+      <td>${r.hrs ? r.hrs.toFixed(2) : "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="15" class="empty">沒有符合的紀錄</td></tr>`;
+}
+$("#repEmp").onchange = renderReport;
+$("#repStatus").onchange = renderReport;
+$("#repSearch").oninput = renderReport;
+
+$("#csvBtn").onclick = () => {
+  const rows = filteredReport();
+  const head = ["員編", "姓名", "打卡日期", "班別", "班別時間",
+    "上班時間", "上班打卡地點", "上班座標", "上班地點異常原因", "上班出勤異常",
+    "下班時間", "下班打卡地點", "下班座標", "下班地點異常原因", "下班出勤異常", "工時"];
   const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const part = x => [x.time, x.place, x.r?.lat != null ? `${x.r.lat},${x.r.lng}` : "", x.reason, x.abn || (x.r ? "正常" : "")];
   const lines = [head.map(q).join(",")].concat(rows.map(r => [
-    r.date, r.u.empNo, r.u.name,
-    r.ids.map(id => shiftMap[id]?.name).filter(Boolean).join("、"),
-    hms(r.g?.in), hms(r.g?.out),
-    r.g?.hrs ? r.g.hrs.toFixed(2) : "",
-    r.st.map(s => s[1]).join("、")
+    r.u.empNo, r.u.name, r.date, r.s?.name || r.inD.r?.shiftName || r.outD.r?.shiftName || "",
+    r.s?.start && r.s?.end ? `${r.s.start}-${r.s.end}` : "",
+    ...part(r.inD), ...part(r.outD), r.hrs ? r.hrs.toFixed(2) : ""
   ].map(q).join(",")));
-  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `出勤報表_${$("#repMonth").value}.csv`;
+  a.download = `打卡紀錄_${$("#repMonth").value}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 };
-
 
 /* ================= 匯入舊班表 Excel（管理者） ================= */
 // 解析舊系統匯出的班表 Excel（每週一區塊：日期列 + 員工列）
