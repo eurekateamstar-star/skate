@@ -45,12 +45,35 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 打卡：只能用自己的身分、伺服器時間新增；不能修改或刪除
+    // 打卡地點：已綁定員工可讀，管理者可改
+    match /locations/{id} {
+      allow read: if bound();
+      allow write: if isAdmin();
+    }
+
+    // 打卡位置檢查：班別有設定打卡地點時，座標必須在範圍內
+    function shiftPath(id) { return /databases/$(database)/documents/shiftTypes/$(id); }
+    function locPath(id) { return /databases/$(database)/documents/locations/$(id); }
+    function inRange(d, lid) {
+      return exists(locPath(lid))
+        && d.lat is number && d.lng is number
+        && math.abs(d.lat - get(locPath(lid)).data.lat) <= get(locPath(lid)).data.dLat
+        && math.abs(d.lng - get(locPath(lid)).data.lng) <= get(locPath(lid)).data.dLng;
+    }
+    function locationOk(d) {
+      return !('shiftId' in d) || d.shiftId == null || d.shiftId == ''
+        || !exists(shiftPath(d.shiftId))
+        || get(shiftPath(d.shiftId)).data.get('locationId', '') == ''
+        || inRange(d, get(shiftPath(d.shiftId)).data.locationId);
+    }
+
+    // 打卡：只能用自己的身分、伺服器時間、在打卡範圍內新增；不能修改或刪除
     match /attendance/{id} {
       allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
       allow create: if bound()
                     && request.resource.data.empId == myEmpId()
-                    && request.resource.data.ts == request.time;
+                    && request.resource.data.ts == request.time
+                    && locationOk(request.resource.data);
       allow update, delete: if isAdmin();
     }
   }

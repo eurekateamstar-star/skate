@@ -225,6 +225,73 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .wk-time{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;padding-top:1px}
 .wk-off{color:#c7c7cc;font-size:14px;padding-top:2px}
 
+/* ---------- 打卡：定位、地圖、各班別打卡卡片 ---------- */
+.clock-card{padding:30px 20px 22px}
+.gps-line{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:6px 14px;border-radius:980px;background:var(--fill);font-size:13px;color:var(--text-2);max-width:100%}
+.gps-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.gps-line.ok .gps-dot{background:var(--green);box-shadow:0 0 0 4px var(--green-l)}
+.gps-line.wait .gps-dot{background:var(--orange);animation:pulse 1.2s infinite}
+.gps-line.bad{background:var(--red-l);color:var(--red)}
+.gps-line.bad .gps-dot{background:var(--red)}
+@keyframes pulse{50%{opacity:.3}}
+.card.map-card{padding:0;overflow:hidden}
+.mini-map{height:220px;width:100%;background:var(--fill)}
+.loc-map{height:300px;border-radius:14px;overflow:hidden;background:var(--fill)}
+.map-tip{background:rgba(255,255,255,.95);border:0;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);font:600 12px var(--font);color:var(--text);padding:3px 8px}
+.map-tip::before{display:none}
+.leaflet-container{font-family:var(--font)}
+.punch-card{padding:18px 18px 16px}
+.pc-head{display:flex;align-items:center;gap:10px}
+.pc-head .dot{width:12px;height:12px}
+.pc-title{flex:1;min-width:0;display:flex;flex-direction:column}
+.pc-title b{font-size:16.5px;font-weight:600;letter-spacing:-.015em}
+.pc-title span{font-size:13px;color:var(--muted);margin-top:1px}
+.pc-loc{display:flex;align-items:center;gap:6px;margin:12px 0 14px;padding:8px 12px;border-radius:10px;font-size:13px;background:var(--fill);color:var(--text-2)}
+.pc-loc.ok{background:var(--green-l);color:var(--green-d)}
+.pc-loc.far{background:var(--red-l);color:var(--red)}
+.pc-loc.wait{background:var(--orange-l);color:var(--orange-d)}
+.pc-btns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pc-btns .btn.big{height:58px;flex-direction:column;gap:0;line-height:1.2}
+.pc-btns .btn.big small{font-size:12px;font-weight:500;opacity:.9}
+.pc-btns .btn.big:disabled{background:var(--fill-2);color:var(--muted);box-shadow:none;opacity:1}
+.punch-card.leave .pc-title span{color:var(--muted)}
+.empty-card{text-align:center;color:var(--muted);padding:28px}
+.other-punch{text-align:center;margin:4px 0 12px}
+.other-punch .btn.link{font-size:14.5px}
+
+/* ---------- 出勤紀錄：月曆 + 當日明細 ---------- */
+.rec-cal{grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.rday{height:54px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;cursor:pointer;transition:background .15s}
+.rday:hover{background:var(--fill)}
+.rnum{width:32px;height:32px;line-height:32px;text-align:center;border-radius:50%;font-size:15px;font-weight:500}
+.rday.wkend .rnum{color:var(--orange-d)}
+.rday.today .rnum{color:var(--primary);font-weight:700}
+.rday.sel .rnum{background:var(--primary);color:#fff;font-weight:600}
+.rdot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0;background:transparent}
+.rdot.ok{background:var(--green)}
+.rdot.bad{background:var(--red)}
+.rdot.wait{background:var(--orange)}
+.rdot.leave{background:#c7c7cc}
+.rd-title{font-size:15px;font-weight:600;color:var(--text-2);margin:6px 4px 10px}
+.rd-group{background:#fff;border-radius:16px;padding:6px 16px;margin-bottom:12px;box-shadow:var(--shadow)}
+.rd-shift{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;padding:10px 0 8px}
+.rd-plan{margin-left:auto;font-weight:400;font-size:13px;color:var(--muted)}
+.rd-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-top:1px solid var(--sep-2)}
+.rd-row .rdot{width:8px;height:8px}
+.rd-kind{font-size:15px;width:40px}
+.rd-status{flex:1;font-size:15px;font-weight:500}
+.rd-status.ok{color:var(--text)}
+.rd-status.bad{color:var(--red)}
+.rd-status.wait{color:var(--muted);font-weight:400}
+.rd-map{font-size:13px}
+.stat b.red{color:var(--red)}
+
+/* ---------- 打卡地點管理 ---------- */
+.radius-in{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px}
+.radius-in input{width:80px}
+.loc-list-wrap{margin-top:14px}
+.dlg-input + select.dlg-input,select.dlg-input{text-align:left;text-align-last:left}
+
 /* ---------- 團隊班表（手機） ---------- */
 .team-day{background:#fff;border-radius:16px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
 .team-day.today{box-shadow:inset 0 0 0 2px var(--primary)}
@@ -440,6 +507,11 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
   .dr-chips .chip{font-size:12.5px;padding:5px 9px;border-radius:8px}
   .dr-empty{color:#c7c7cc;font-size:14px}
   .dr-add{width:30px;height:30px;border-radius:50%;background:var(--primary-l);color:var(--primary);font-size:18px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:500}
+
+  .mini-map{height:200px}
+  .loc-map{height:260px}
+  .rday{height:50px}
+  .pc-btns .btn.big{height:62px;font-size:17px}
 
   /* 視窗 → 全螢幕抽屜 */
   .modal-mask{padding:0;align-items:flex-end}

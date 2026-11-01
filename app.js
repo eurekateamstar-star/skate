@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=21";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=23";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -32,10 +32,13 @@ function toast(msg) {
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2500);
 }
 // App 風格對話框（取代瀏覽器內建 confirm / alert）
-function appDialog({ title = "", message = "", buttons = [{ text: "好", value: true, style: "primary" }], input = null }) {
+function appDialog({ title = "", message = "", buttons = [{ text: "好", value: true, style: "primary" }], input = null, select = null }) {
   return new Promise(resolve => {
     const mask = $("#dlg");
     const inp = $("#dlgInput");
+    const sel = $("#dlgSelect");
+    sel.classList.toggle("hidden", !select);
+    if (select) sel.innerHTML = select.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("");
     inp.classList.toggle("hidden", !input);
     if (input) { inp.type = input.type || "text"; inp.value = input.value || ""; inp.placeholder = input.placeholder || ""; }
     $("#dlgTitle").textContent = title;
@@ -51,7 +54,7 @@ function appDialog({ title = "", message = "", buttons = [{ text: "好", value: 
       mask.classList.remove("open");
       setTimeout(() => mask.classList.add("hidden"), 180);
       const v = buttons[+btn.dataset.i].value;
-      resolve(input && v === true ? inp.value : v);
+      resolve(v === true && select ? sel.value : input && v === true ? inp.value : v);
     };
   });
 }
@@ -373,6 +376,7 @@ function showView(name) {
   closeSheet();
   scrollTo(0, 0);
   if (name === "scheduling" && !$("#view-scheduling").dataset.keep) schMode = "list";
+  if (name !== "clock") stopGeo();
   loaders[name]?.().catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); });
 }
 $$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));
@@ -426,65 +430,215 @@ function tick() {
   $("#nowDate").textContent = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
 }
 
-async function loadClock() {
-  const today = ymd(new Date());
-  const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${me.id}_${today}`)), loadToday()]);
-  const ids = sch.exists() ? sch.data().shiftIds || [] : [];
-  $("#todayShift").innerHTML = ids.length
-    ? "今日班別：" + ids.map(id => chipHtml(id)).join("")
-    : "今日無排班";
-}
-
-async function loadToday() {
-  const today = ymd(new Date());
-  const snap = await getDocs(query(collection(db, "attendance"),
-    where("empId", "==", me.id), where("date", "==", today)));
-  const list = snap.docs.map(toRec).sort((a, b) => a.t - b.t);
-  $("#todayList").innerHTML = list.length ? list.map(r => `
-    <tr>
-      <td><span class="tag ${r.type}">${r.type === "in" ? "上班" : "下班"}</span></td>
-      <td>${hms(r.t)}</td>
-      <td>${mapLink(r)}</td>
-    </tr>`).join("") : `<tr><td colspan="3" class="empty">今天還沒有打卡</td></tr>`;
-}
-
 const mapLink = r => r.lat != null
   ? `<a href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank" rel="noopener">查看地圖</a>`
   : "—";
 
-function getPosition() {
-  if (!$("#useGps").checked || !navigator.geolocation) return Promise.resolve(null);
-  return new Promise(res => navigator.geolocation.getCurrentPosition(
-    p => res({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) }),
-    () => res(null),
-    { timeout: 8000, enableHighAccuracy: true }
-  ));
+// ---- 打卡地點 ----
+let locations = [], locMap = {};
+async function loadLocations() {
+  const snap = await getDocs(collection(db, "locations"));
+  locations = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  locMap = Object.fromEntries(locations.map(l => [l.id, l]));
+}
+function distM(a, b) {
+  const R = 6371000, r = x => x * Math.PI / 180;
+  const dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function parseCoord(str) {
+  const m = String(str || "").match(/(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
+  return m ? { lat: +m[1], lng: +m[2] } : null;
 }
 
-async function punch(type) {
-  const btns = [$("#clockIn"), $("#clockOut")];
-  btns.forEach(b => b.disabled = true);
+// ---- 定位 ----
+const geo = { pos: null, acc: null, err: null, watch: null, first: true };
+function startGeo() {
+  if (!navigator.geolocation) { geo.err = "這個裝置不支援定位"; return onGeo(); }
+  if (geo.watch != null) return;
+  geo.watch = navigator.geolocation.watchPosition(p => {
+    geo.pos = { lat: p.coords.latitude, lng: p.coords.longitude };
+    geo.acc = Math.round(p.coords.accuracy);
+    geo.err = null;
+    if (geo.first) { geo.first = false; mapFitted = false; }
+    onGeo();
+  }, e => {
+    geo.err = e.code === 1 ? "請允許定位權限才能打卡（LINE 右上角 ⋮ → 設定，或手機設定開啟定位）" : "暫時無法取得定位，請到戶外或稍後再試";
+    onGeo();
+  }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+}
+function stopGeo() {
+  if (geo.watch != null) { navigator.geolocation.clearWatch(geo.watch); geo.watch = null; }
+}
+function onGeo() {
+  const line = $("#gpsLine");
+  line.className = "gps-line " + (geo.err ? "bad" : geo.pos ? "ok" : "wait");
+  $("#gpsText").textContent = geo.err || (geo.pos ? `已定位・精準度約 ${geo.acc} 公尺` : "定位中…");
+  if (!$("#view-clock").classList.contains("hidden")) { renderPunchCards(); updateClockMap(); }
+}
+// 是否在打卡範圍內
+function rangeCheck(loc) {
+  if (!loc) return { ok: true, cls: "none", text: "此班別未設定打卡地點，不限地點" };
+  if (geo.err) return { ok: false, cls: "far", text: geo.err };
+  if (!geo.pos) return { ok: false, cls: "wait", text: `${loc.name}・定位中…` };
+  const d = Math.round(distM(geo.pos, loc));
+  const ok = d <= (loc.radius || 50) + Math.min(geo.acc || 0, 20);
+  return { ok, cls: ok ? "ok" : "far", d, text: ok ? `${loc.name}・距離 ${d} 公尺，可以打卡` : `${loc.name}・距離 ${d} 公尺（需在 ${loc.radius || 50} 公尺內）` };
+}
+
+// ---- 地圖（Leaflet）----
+let leafletP = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  return leafletP ??= new Promise((res, rej) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet"; css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(css);
+    const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    sc.onload = () => res(window.L); sc.onerror = rej;
+    document.head.appendChild(sc);
+  });
+}
+const TILE = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const TILE_ATTR = "© OpenStreetMap © CARTO";
+function newMap(L, el) {
+  const m = L.map(el, { zoomControl: false, attributionControl: true });
+  L.tileLayer(TILE, { attribution: TILE_ATTR, maxZoom: 20, subdomains: "abcd" }).addTo(m);
+  return m;
+}
+
+// ---- 今日班別打卡 ----
+let clockShifts = [], extraShifts = [], todayRecs = [];
+let cMap = null, cLayer = null, mapFitted = false;
+const punchIds = () => [...new Set([...clockShifts, ...extraShifts])].filter(id => shiftMap[id])
+  .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
+
+async function loadClock() {
+  const today = ymd(new Date());
+  const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${me.id}_${today}`)), loadToday(), loadLocations()]);
+  clockShifts = sch.exists() ? sch.data().shiftIds || [] : [];
+  mapFitted = false;
+  renderPunchCards();
+  startGeo();
+  updateClockMap();
+}
+
+async function loadToday() {
+  const today = ymd(new Date());
+  const snap = await getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("date", "==", today)));
+  todayRecs = snap.docs.map(toRec).sort((a, b) => a.t - b.t);
+}
+
+function renderPunchCards() {
+  const ids = punchIds();
+  if (!ids.length) {
+    $("#shiftPunch").innerHTML = `<div class="card empty-card">今天沒有排班</div>`;
+    return;
+  }
+  $("#shiftPunch").innerHTML = ids.map(id => {
+    const s = shiftMap[id];
+    const time = s.start && s.end ? `上班 ${s.start}・下班 ${s.end}` : "";
+    if (s.cat === "leave") {
+      return `<div class="card punch-card leave"><div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
+        <div class="pc-title"><b>${esc(s.name)}</b><span>休假，不需打卡</span></div></div></div>`;
+    }
+    const loc = locMap[s.locationId];
+    const chk = rangeCheck(loc);
+    const recs = todayRecs.filter(r => r.shiftId === id);
+    const inR = recs.filter(r => r.type === "in")[0];
+    const outR = recs.filter(r => r.type === "out").at(-1);
+    const btn = (type, r, label) => `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}" ${chk.ok ? "" : "disabled"}>
+      <span>${label}</span>${r ? `<small>已打 ${hm(r.t)}</small>` : ""}</button>`;
+    return `<div class="card punch-card">
+      <div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
+        <div class="pc-title"><b>${esc(s.name)}</b>${time ? `<span>${time}</span>` : ""}</div>
+        ${inR && outR ? `<span class="badge green">已完成</span>` : inR ? `<span class="badge orange">上班中</span>` : ""}</div>
+      <div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${esc(chk.text)}</div>
+      <div class="pc-btns">${btn("in", inR, "上班")}${btn("out", outR, "下班")}</div>
+    </div>`;
+  }).join("");
+}
+
+async function updateClockMap() {
+  const locs = [...new Map(punchIds().map(id => locMap[shiftMap[id]?.locationId]).filter(Boolean).map(l => [l.id, l])).values()];
+  if (!locs.length && !geo.pos) { $("#mapCard").classList.add("hidden"); return; }
+  $("#mapCard").classList.remove("hidden");
+  let L;
+  try { L = await loadLeaflet(); } catch { $("#mapCard").classList.add("hidden"); return; }
+  if (!cMap) { cMap = newMap(L, "clockMap"); cLayer = L.layerGroup().addTo(cMap); }
+  cLayer.clearLayers();
+  const pts = [];
+  locs.forEach(l => {
+    L.circle([l.lat, l.lng], { radius: l.radius || 50, color: "#0071e3", weight: 2, fillOpacity: .12 }).addTo(cLayer).bindTooltip(l.name, { permanent: true, direction: "top", className: "map-tip" });
+    pts.push([l.lat, l.lng]);
+  });
+  if (geo.pos) {
+    if (geo.acc) L.circle([geo.pos.lat, geo.pos.lng], { radius: Math.min(geo.acc, 200), stroke: false, fillColor: "#34c759", fillOpacity: .15 }).addTo(cLayer);
+    L.circleMarker([geo.pos.lat, geo.pos.lng], { radius: 7, color: "#fff", weight: 3, fillColor: "#34c759", fillOpacity: 1 }).addTo(cLayer);
+    pts.push([geo.pos.lat, geo.pos.lng]);
+  }
+  setTimeout(() => {
+    cMap.invalidateSize();
+    if (!mapFitted && pts.length) {
+      pts.length === 1 ? cMap.setView(pts[0], 17) : cMap.fitBounds(pts, { padding: [40, 40], maxZoom: 18 });
+      mapFitted = true;
+    }
+  }, 50);
+}
+
+$("#shiftPunch").onclick = e => {
+  const b = e.target.closest("[data-punch]");
+  if (b && !b.disabled) punch(b.dataset.punch, b.dataset.sid);
+};
+
+async function punch(type, sid) {
+  const s = shiftMap[sid];
+  const loc = locMap[s?.locationId];
+  const chk = rangeCheck(loc);
+  if (!chk.ok) return appAlert("無法打卡", chk.text);
+  const done = todayRecs.some(r => r.shiftId === sid && r.type === type);
+  if (done && !(await appConfirm("重複打卡", `「${s.name}」已經打過${type === "in" ? "上班" : "下班"}卡，要再打一次嗎？`, { okText: "再打一次" }))) return;
+  if (type === "out" && !todayRecs.some(r => r.shiftId === sid && r.type === "in") &&
+      !(await appConfirm("還沒打上班卡", `「${s.name}」還沒有上班卡紀錄，確定要直接打下班卡？`, { okText: "打下班卡" }))) return;
+  $$("#shiftPunch [data-punch]").forEach(x => x.disabled = true);
   try {
     const now = new Date();
-    const pos = await getPosition();
     await addDoc(collection(db, "attendance"), {
       empId: me.id, name: me.name, empNo: me.empNo || "",
-      type, date: ymd(now), month: ym(now),
+      type, shiftId: sid, shiftName: s?.name || "",
+      locationId: loc?.id || null, dist: chk.d ?? null,
+      date: ymd(now), month: ym(now),
       ts: serverTimestamp(), clientTime: now.toISOString(),
-      lat: pos?.lat ?? null, lng: pos?.lng ?? null
+      lat: geo.pos?.lat ?? null, lng: geo.pos?.lng ?? null, acc: geo.acc ?? null
     });
     navigator.vibrate?.(30);
-    toast(`${type === "in" ? "上班" : "下班"}打卡成功 ${hms(now)}`);
+    toast(`${s?.name || ""} ${type === "in" ? "上班" : "下班"}打卡成功 ${hm(now)}`);
     await loadToday();
   } catch (err) {
     console.error(err);
     toast("打卡失敗：" + errMsg(err));
   } finally {
-    btns.forEach(b => b.disabled = false);
+    renderPunchCards();
   }
 }
-$("#clockIn").onclick = () => punch("in");
-$("#clockOut").onclick = () => punch("out");
+
+$("#otherPunchBtn").onclick = async () => {
+  const have = new Set(punchIds());
+  const opts = shiftTypes.filter(s => s.cat !== "leave" && !have.has(s.id));
+  if (!opts.length) return appAlert("沒有其他班別", "所有班別都已經在今天的打卡清單中。");
+  const sid = await appDialog({
+    title: "打其他班別的卡", message: "選擇要打卡的班別",
+    select: opts.map(s => ({ value: s.id, label: `${s.name}${s.start && s.end ? `（${s.start}-${s.end}）` : ""}` })),
+    buttons: [{ text: "取消", value: false }, { text: "加入", value: true, style: "primary" }]
+  });
+  if (!sid) return;
+  extraShifts.push(sid);
+  mapFitted = false;
+  renderPunchCards();
+  updateClockMap();
+};
 
 /* ================= 出勤彙整（共用） ================= */
 const toRec = d => { const r = d.data(); return { ...r, t: r.ts?.toDate() || new Date(r.clientTime) }; };
@@ -526,41 +680,116 @@ function dayStatus(g, ids, dateStr) {
 const statusHtml = st => st.map(([c, t]) => `<span class="tag ${c}">${t}</span>`).join("");
 
 /* ================= 我的出勤紀錄 ================= */
+let rec = { month: null, sch: {}, recs: [], sel: null };
+
+// 某一天、某個班別的上下班狀態
+function shiftPunchState(ds, sid, recs) {
+  const s = shiftMap[sid];
+  const mine = recs.filter(r => r.date === ds && r.shiftId === sid);
+  const inR = mine.filter(r => r.type === "in").sort((a, b) => a.t - b.t)[0];
+  const outR = mine.filter(r => r.type === "out").sort((a, b) => b.t - a.t)[0];
+  const now = new Date(), today = ymd(now), nowHm = hm(now);
+  const passed = t => ds < today || (ds === today && t && nowHm > t);
+  const one = (r, kind) => {
+    const plan = kind === "in" ? s?.start : s?.end;
+    if (r) {
+      const t = hm(r.t);
+      const bad = plan && (kind === "in" ? t > plan : t < plan);
+      return { t, cls: bad ? "bad" : "ok", label: bad ? (kind === "in" ? "遲到" : "早退") : "正常", r };
+    }
+    return passed(plan) ? { cls: "bad", label: kind === "in" ? "上班未打卡" : "下班未打卡" } : { cls: "wait", label: "尚未打卡" };
+  };
+  return { s, in: one(inR, "in"), out: one(outR, "out") };
+}
+
 async function loadRecords() {
   const month = $("#recMonth").value;
   const [attSnap, schSnap] = await Promise.all([
     getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("month", "==", month))),
     getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month)))
   ]);
-  const groups = groupDaily(attSnap.docs.map(toRec));
-  const sch = {};
-  schSnap.forEach(d => sch[d.data().date] = d.data().shiftIds || []);
-
-  let rows = "", days = 0, total = 0, late = 0;
+  rec.month = month;
+  rec.recs = attSnap.docs.map(toRec);
+  rec.sch = {};
+  schSnap.forEach(d => rec.sch[d.data().date] = d.data().shiftIds || []);
+  if (!rec.sel || rec.sel.slice(0, 7) !== month) {
+    const t = ymd(new Date());
+    rec.sel = t.slice(0, 7) === month ? t : `${month}-01`;
+  }
+  // 統計
+  let days = 0, late = 0, miss = 0;
   for (const d of daysOfMonth(month)) {
     const ds = ymd(d);
-    const g = groups[`${me.id}_${ds}`];
-    const ids = sch[ds];
-    if (!g && !ids) continue;
-    const st = dayStatus(g, ids, ds);
-    if (g) days++;
-    if (g?.hrs) total += g.hrs;
-    if (st.some(s => s[1] === "遲到")) late++;
-    rows += `<tr>
-      <td>${dayLabel(ds)}</td>
-      <td>${(ids || []).map(id => chipHtml(id)).join(" ") || "—"}</td>
-      <td>${hms(g?.in) || "—"}</td>
-      <td>${hms(g?.out) || "—"}</td>
-      <td>${g?.hrs ? g.hrs.toFixed(2) : "—"}</td>
-      <td>${statusHtml(st)}</td>
-    </tr>`;
+    const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave");
+    if (rec.recs.some(r => r.date === ds)) days++;
+    work.forEach(id => {
+      const st = shiftPunchState(ds, id, rec.recs);
+      [st.in, st.out].forEach(x => { if (x.label === "遲到" || x.label === "早退") late++; if (x.label.includes("未打卡")) miss++; });
+    });
   }
-  $("#recList").innerHTML = rows || `<tr><td colspan="6" class="empty">本月沒有紀錄</td></tr>`;
   $("#recSummary").innerHTML = `
     <div class="stat"><b>${days}</b>出勤天數</div>
-    <div class="stat"><b>${total.toFixed(1)}</b>總工時</div>
-    <div class="stat"><b>${late}</b>遲到次數</div>`;
+    <div class="stat"><b>${late}</b>遲到／早退</div>
+    <div class="stat"><b class="${miss ? "red" : ""}">${miss}</b>未打卡</div>`;
+  renderRecCal();
+  renderRecDay();
 }
+
+function dayFlag(ds) {
+  const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave");
+  const has = rec.recs.some(r => r.date === ds);
+  if (!work.length) return has ? "ok" : (rec.sch[ds]?.length ? "leave" : "");
+  let bad = false, wait = false;
+  work.forEach(id => { const st = shiftPunchState(ds, id, rec.recs); [st.in, st.out].forEach(x => { if (x.cls === "bad") bad = true; if (x.cls === "wait") wait = true; }); });
+  return bad ? "bad" : wait ? "wait" : "ok";
+}
+
+function renderRecCal() {
+  const days = daysOfMonth(rec.month);
+  const today = ymd(new Date());
+  let html = [...WEEK].map(w => `<div class="hd">${w}</div>`).join("") + "<div></div>".repeat(days[0].getDay());
+  for (const d of days) {
+    const ds = ymd(d), f = dayFlag(ds);
+    html += `<div class="rday ${ds === today ? "today" : ""} ${ds === rec.sel ? "sel" : ""} ${d.getDay() % 6 === 0 ? "wkend" : ""}" data-ds="${ds}">
+      <span class="rnum">${d.getDate()}</span><i class="rdot ${f}"></i></div>`;
+  }
+  $("#recCal").innerHTML = html;
+}
+
+function renderRecDay() {
+  const ds = rec.sel;
+  const d = new Date(ds + "T00:00:00");
+  $("#recDayTitle").textContent = `${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
+  const ids = (rec.sch[ds] || []).filter(id => shiftMap[id]);
+  const used = new Set();
+  let html = ids.map(id => {
+    const st = shiftPunchState(ds, id, rec.recs);
+    used.add(id);
+    if (st.s.cat === "leave") return `<div class="rd-group"><div class="rd-shift"><span class="dot" style="background:${esc(st.s.color)}"></span>${esc(st.s.name)}<span class="rd-plan">休假</span></div></div>`;
+    const row = (kind, x) => `<div class="rd-row"><i class="rdot ${x.cls}"></i><span class="rd-kind">${kind === "in" ? "上班" : "下班"}</span>
+      <span class="rd-status ${x.cls}">${x.t ? `${x.t}・${x.label}` : x.label}</span>
+      ${x.r?.lat != null ? `<a class="rd-map" href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">地圖</a>` : ""}</div>`;
+    return `<div class="rd-group">
+      <div class="rd-shift"><span class="dot" style="background:${esc(st.s.color)}"></span>${esc(st.s.name)}${st.s.start && st.s.end ? `<span class="rd-plan">${st.s.start}–${st.s.end}</span>` : ""}</div>
+      ${row("in", st.in)}${row("out", st.out)}
+    </div>`;
+  }).join("");
+  // 沒有對應到排班的打卡（舊紀錄或臨時班別）
+  const others = rec.recs.filter(r => r.date === ds && (!r.shiftId || !used.has(r.shiftId))).sort((a, b) => a.t - b.t);
+  if (others.length) {
+    html += `<div class="rd-group"><div class="rd-shift">其他打卡</div>${others.map(r => `<div class="rd-row"><i class="rdot ok"></i>
+      <span class="rd-kind">${r.type === "in" ? "上班" : "下班"}</span><span class="rd-status ok">${hm(r.t)}${r.shiftName ? `・${esc(r.shiftName)}` : ""}</span></div>`).join("")}</div>`;
+  }
+  $("#recDetail").innerHTML = html || `<div class="card empty-card">這天沒有排班，也沒有打卡紀錄</div>`;
+}
+
+$("#recCal").onclick = e => {
+  const c = e.target.closest(".rday[data-ds]");
+  if (!c) return;
+  rec.sel = c.dataset.ds;
+  renderRecCal();
+  renderRecDay();
+};
 
 /* ================= 我的班表 ================= */
 let mySchMode = "mine";
@@ -830,7 +1059,10 @@ $("#importBtn").onclick = async () => {
 
 /* ================= 班別設定（管理者） ================= */
 async function renderShiftList() {
-  await loadShiftTypes();
+  await Promise.all([loadShiftTypes(), loadLocations()]);
+  renderLocList();
+  initLocMap();
+  const locOpts = sel => `<option value="">不限地點</option>` + locations.map(l => `<option value="${l.id}" ${sel === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   $("#shiftList").innerHTML = shiftTypes.length ? shiftTypes.map(s => `
     <tr data-id="${s.id}">
       <td><input type="checkbox" class="s-chk"></td>
@@ -843,12 +1075,13 @@ async function renderShiftList() {
       <td><input class="s-start" type="time" value="${esc(s.start || "")}"></td>
       <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
       <td>${shiftHours(s) || "—"}${s.breakStart && s.breakEnd ? `<div class="emp-no">休息 ${esc(s.breakStart)}~${esc(s.breakEnd)}</div>` : ""}</td>
+      <td><select class="s-loc">${locOpts(s.locationId || "")}</select></td>
       <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
       <td>
         <button class="btn small primary s-save">儲存</button>
         <button class="btn small danger s-del">刪除</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="9" class="empty">尚未建立班別</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="10" class="empty">尚未建立班別</td></tr>`;
   $("#shAll").checked = false;
   $("#shCount").textContent = `共 ${shiftTypes.length} 個班別`;
 }
@@ -882,6 +1115,7 @@ $("#shiftList").onclick = async e => {
         name: $(".s-name", tr).value.trim(),
         start: $(".s-start", tr).value,
         end: $(".s-end", tr).value,
+        locationId: $(".s-loc", tr).value || "",
         color: $(".s-color", tr).value
       };
       if (!data.name) return toast("名稱不可空白");
@@ -893,6 +1127,101 @@ $("#shiftList").onclick = async e => {
     } else if (e.target.classList.contains("s-del")) {
       if (!(await appConfirm("刪除班別", `確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`, { okText: "刪除", danger: true }))) return;
       await deleteDoc(doc(db, "shiftTypes", id));
+      toast("已刪除");
+      renderShiftList();
+    }
+  } catch (err) { toast("操作失敗：" + errMsg(err)); }
+};
+
+// ---- 打卡地點（管理者）----
+let lMap = null, lLayer = null, lPick = null;
+const boxOf = (lat, radius) => {
+  // 給安全規則用的經緯度範圍（多留 30 公尺給 GPS 誤差）
+  const m = (radius || 50) + 30;
+  return { dLat: m / 111320, dLng: m / (111320 * Math.cos(lat * Math.PI / 180)) };
+};
+
+function renderLocList() {
+  const used = id => shiftTypes.filter(s => s.locationId === id).length;
+  $("#locList").innerHTML = locations.map(l => `
+    <tr data-id="${l.id}">
+      <td><input class="l-name" value="${esc(l.name)}" size="14"></td>
+      <td><a href="https://www.google.com/maps?q=${l.lat},${l.lng}" target="_blank" rel="noopener">${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}</a><div class="emp-no">${used(l.id)} 個班別使用</div></td>
+      <td><input class="l-radius" type="number" min="10" max="1000" value="${l.radius || 50}" style="width:80px"></td>
+      <td><button class="btn small primary l-save">儲存</button> <button class="btn small danger l-del">刪除</button></td>
+    </tr>`).join("") || `<tr><td colspan="4" class="empty">尚未建立打卡地點</td></tr>`;
+}
+
+async function initLocMap() {
+  let L;
+  try { L = await loadLeaflet(); } catch { return; }
+  if (!lMap) {
+    lMap = newMap(L, "locMap");
+    L.control.zoom({ position: "bottomright" }).addTo(lMap);
+    lLayer = L.layerGroup().addTo(lMap);
+    lMap.on("click", e => setPick(e.latlng.lat, e.latlng.lng, true));
+    lMap.setView([25.04, 121.53], 12);
+  }
+  lLayer.clearLayers();
+  const pts = locations.map(l => {
+    L.circle([l.lat, l.lng], { radius: l.radius || 50, color: "#0071e3", weight: 2, fillOpacity: .12 }).addTo(lLayer)
+      .bindTooltip(l.name, { permanent: true, direction: "top", className: "map-tip" });
+    return [l.lat, l.lng];
+  });
+  setTimeout(() => {
+    lMap.invalidateSize();
+    if (pts.length && !lPick) pts.length === 1 ? lMap.setView(pts[0], 16) : lMap.fitBounds(pts, { padding: [30, 30], maxZoom: 17 });
+  }, 60);
+}
+
+async function setPick(lat, lng, fromMap) {
+  const L = await loadLeaflet();
+  $("#locCoord").value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  const r = +$("#locRadius").value || 50;
+  if (lPick) lLayer.removeLayer(lPick);
+  lPick = L.circle([lat, lng], { radius: r, color: "#ff9500", weight: 2, fillOpacity: .18, dashArray: "4 4" }).addTo(lLayer);
+  if (!fromMap) lMap.setView([lat, lng], 17);
+}
+$("#locCoord").onchange = () => { const c = parseCoord($("#locCoord").value); if (c) setPick(c.lat, c.lng); else toast("看不懂這個座標，請點地圖選位置"); };
+$("#locRadius").oninput = () => { if (lPick) lPick.setRadius(+$("#locRadius").value || 50); };
+$("#locHere").onclick = () => {
+  if (!navigator.geolocation) return toast("這個裝置不支援定位");
+  toast("定位中…");
+  navigator.geolocation.getCurrentPosition(p => setPick(p.coords.latitude, p.coords.longitude),
+    () => toast("無法取得目前位置，請改點地圖"), { enableHighAccuracy: true, timeout: 15000 });
+};
+$("#locForm").onsubmit = async e => {
+  e.preventDefault();
+  const c = parseCoord($("#locCoord").value);
+  if (!c) return toast("請先在地圖上點選位置");
+  const radius = Math.max(10, Math.min(1000, +$("#locRadius").value || 50));
+  const name = $("#locName").value.trim();
+  if (!name) return;
+  try {
+    await addDoc(collection(db, "locations"), { name, lat: c.lat, lng: c.lng, radius, ...boxOf(c.lat, radius), createdAt: serverTimestamp() });
+    toast(`已新增「${name}」，記得在下方班別指定打卡地點`);
+    e.target.reset(); $("#locRadius").value = 50;
+    if (lPick) { lLayer.removeLayer(lPick); lPick = null; }
+    renderShiftList();
+  } catch (err) { toast("新增失敗：" + errMsg(err) + "（請確認 firestore.rules 已更新）"); }
+};
+$("#locList").onclick = async e => {
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr) return;
+  const l = locMap[tr.dataset.id];
+  try {
+    if (e.target.classList.contains("l-save")) {
+      const radius = Math.max(10, Math.min(1000, +$(".l-radius", tr).value || 50));
+      await updateDoc(doc(db, "locations", l.id), { name: $(".l-name", tr).value.trim() || l.name, radius, ...boxOf(l.lat, radius) });
+      toast("已儲存");
+      renderShiftList();
+    } else if (e.target.classList.contains("l-del")) {
+      const n = shiftTypes.filter(s => s.locationId === l.id).length;
+      if (!(await appConfirm("刪除打卡地點", `刪除「${l.name}」？${n ? `目前有 ${n} 個班別使用，刪除後這些班別將不限地點。` : ""}`, { okText: "刪除", danger: true }))) return;
+      const b = writeBatch(db);
+      shiftTypes.filter(s => s.locationId === l.id).forEach(s => b.update(doc(db, "shiftTypes", s.id), { locationId: "" }));
+      b.delete(doc(db, "locations", l.id));
+      await b.commit();
       toast("已刪除");
       renderShiftList();
     }

@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=21">
+  <link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 
@@ -106,35 +106,28 @@
         <div class="card clock-card">
           <div id="nowDate" class="now-date"></div>
           <div id="nowTime" class="now-time">--:--:--</div>
-          <div id="todayShift" class="today-shift"></div>
-          <div class="clock-btns">
-            <button class="btn big in" id="clockIn"><svg class="ic"><use href="#i-in"/></svg>上班打卡</button>
-            <button class="btn big out" id="clockOut"><svg class="ic"><use href="#i-out"/></svg>下班打卡</button>
-          </div>
-          <label class="chk"><input type="checkbox" id="useGps" checked> <svg class="ic sm"><use href="#i-pin"/></svg>記錄 GPS 位置</label>
+          <div class="gps-line" id="gpsLine"><span class="gps-dot"></span><span id="gpsText">定位中…</span></div>
         </div>
-        <div class="card">
-          <h3>今日打卡紀錄</h3>
-          <table class="tbl">
-            <thead><tr><th>類型</th><th>時間</th><th>位置</th></tr></thead>
-            <tbody id="todayList"></tbody>
-          </table>
-        </div>
+        <div class="card map-card hidden" id="mapCard"><div id="clockMap" class="mini-map"></div></div>
+        <div id="shiftPunch"></div>
+        <div class="other-punch"><button class="btn link" id="otherPunchBtn">想打其他班別的卡嗎？點這裡</button></div>
       </section>
 
       <!-- 出勤紀錄 -->
       <section id="view-records" class="view hidden">
         <div class="view-head">
-          <h2>出勤紀錄</h2>
-          <input type="month" id="recMonth">
+          <div class="vh-title">
+            <h2>出勤紀錄</h2>
+            <div class="vh-sub">點日期查看當天每個班別的打卡</div>
+          </div>
+          <div class="vh-actions">
+            <input type="month" id="recMonth">
+          </div>
         </div>
         <div class="summary" id="recSummary"></div>
-        <div class="card">
-          <table class="tbl">
-            <thead><tr><th>日期</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th></tr></thead>
-            <tbody id="recList"></tbody>
-          </table>
-        </div>
+        <div class="card cal-card"><div class="cal rec-cal" id="recCal"></div></div>
+        <div class="rd-title" id="recDayTitle"></div>
+        <div id="recDetail"></div>
       </section>
 
       <!-- 我的班表 -->
@@ -297,6 +290,24 @@
       <section id="view-shifts" class="view hidden">
         <div class="view-head"><h2>班別設定</h2></div>
         <div class="card">
+          <h3>打卡地點</h3>
+          <div id="locMap" class="loc-map"></div>
+          <form id="locForm" class="form-row" style="margin-top:12px">
+            <input id="locName" placeholder="地點名稱（例：迎風溜冰場）" required>
+            <input id="locCoord" placeholder="點地圖，或貼上座標 / Google 地圖連結" required style="flex:2 1 220px">
+            <span class="radius-in"><input id="locRadius" type="number" min="10" max="1000" value="50">公尺</span>
+            <button type="button" class="btn" id="locHere">使用目前位置</button>
+            <button class="btn primary">新增地點</button>
+          </form>
+          <p class="hint">在地圖上點一下就能選位置。員工必須在範圍內才能打卡；在下方班別列表為每個班別指定打卡地點，沒指定的班別不限地點。</p>
+          <div class="loc-list-wrap">
+            <table class="tbl">
+              <thead><tr><th>地點</th><th>座標</th><th>範圍（公尺）</th><th></th></tr></thead>
+              <tbody id="locList"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
           <h3>新增班別</h3>
           <form id="shiftForm" class="form-row">
             <select id="shCat">
@@ -328,7 +339,7 @@
             <span class="hint" style="margin:0" id="shCount"></span>
           </div>
           <table class="tbl">
-            <thead><tr><th><input type="checkbox" id="shAll" title="全選"></th><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>顏色</th><th></th></tr></thead>
+            <thead><tr><th><input type="checkbox" id="shAll" title="全選"></th><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>打卡地點</th><th>顏色</th><th></th></tr></thead>
             <tbody id="shiftList"></tbody>
           </table>
         </div>
@@ -437,6 +448,7 @@
       <div class="dlg-title" id="dlgTitle"></div>
       <div class="dlg-msg" id="dlgMsg"></div>
       <input id="dlgInput" class="dlg-input hidden">
+      <select id="dlgSelect" class="dlg-input hidden"></select>
     </div>
     <div class="dlg-btns" id="dlgBtns"></div>
   </div>
@@ -455,6 +467,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=21"></script>
+<script type="module" src="app.js?v=23"></script>
 </body>
 </html>
