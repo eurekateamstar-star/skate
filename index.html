@@ -15,7 +15,7 @@
   <title>打卡系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
 
@@ -156,17 +156,39 @@
 
       <!-- 排班作業 -->
       <section id="view-scheduling" class="view hidden">
+        <!-- 班表列表 -->
+        <div id="schListView">
+          <div class="view-head">
+            <div class="vh-title">
+              <h2>排班作業</h2>
+              <div class="vh-sub">每個月一份班表，點「編輯」進入排班</div>
+            </div>
+            <div class="vh-actions two">
+              <button class="btn" id="importXlsxBtn">匯入 Excel</button>
+              <input type="file" id="xlsxInput" accept=".xlsx,.xls" hidden>
+              <button class="btn primary" id="newRosterBtn">＋ 新增班表</button>
+            </div>
+          </div>
+          <div class="card">
+            <table class="tbl roster-tbl">
+              <thead><tr><th>班表名稱</th><th>可排範圍</th><th>檢視權限</th><th>發布狀態</th><th></th></tr></thead>
+              <tbody id="rosterList"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 單月排班 -->
+        <div id="schEditor" class="hidden">
         <div class="view-head">
           <div class="vh-title">
+            <button class="back-btn" id="schBack"><svg class="ic"><use href="#i-left"/></svg>班表列表</button>
             <h2 id="schTitle">排班作業</h2>
             <div class="vh-sub" id="schSub"></div>
           </div>
-          <div class="vh-actions">
-            <input type="month" id="schMonth">
+          <div class="vh-actions three">
+            <input type="month" id="schMonth" hidden>
             <button class="btn" id="rosterEditBtn">班表設定</button>
             <button class="btn" id="copyPrevBtn">複製上月</button>
-            <button class="btn" id="importXlsxBtn">匯入 Excel</button>
-            <input type="file" id="xlsxInput" accept=".xlsx,.xls" hidden>
             <button class="btn primary" id="publishBtn">發布</button>
           </div>
         </div>
@@ -196,6 +218,7 @@
         </div>
         <!-- 手機版：單一員工的日期清單 -->
         <div class="day-list mob-only" id="schDays"></div>
+        </div>
       </section>
 
       <!-- 出勤報表 -->
@@ -398,6 +421,7 @@
     <div class="dlg-body">
       <div class="dlg-title" id="dlgTitle"></div>
       <div class="dlg-msg" id="dlgMsg"></div>
+      <input id="dlgInput" class="dlg-input hidden">
     </div>
     <div class="dlg-btns" id="dlgBtns"></div>
   </div>
@@ -416,6 +440,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=16"></script>
+<script type="module" src="app.js?v=17"></script>
 </body>
 </html>

@@ -252,6 +252,16 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .ci-main .ci-name{flex:none}
 .ci-main .ci-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+/* ---------- 班表列表 ---------- */
+.back-btn{display:inline-flex;align-items:center;gap:2px;border:0;background:none;color:var(--primary);font:500 15px var(--font);cursor:pointer;padding:0;margin:0 0 6px -4px}
+.back-btn .ic{width:20px;height:20px}
+.roster-name{font-weight:600;color:var(--text);cursor:pointer}
+.roster-name:hover{color:var(--primary);text-decoration:none}
+.row-acts{text-align:right!important}
+.row-acts .btn + .btn{margin-left:6px}
+.roster-tbl td{height:56px}
+.dlg-input{width:100%;margin-top:14px;background:#fff;text-align:center;font-size:16px}
+
 /* ---------- App 對話框 ---------- */
 .dlg-mask{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;padding:32px;opacity:0;transition:opacity .18s}
 .dlg-mask.open{opacity:1}
@@ -306,6 +316,17 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
   .vh-title,.view-head > h2{flex-basis:100%}
   .vh-actions{width:100%;display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
   .vh-actions > input[type=month]{grid-column:1/-1}
+  .vh-actions.three{grid-template-columns:repeat(3,1fr)}
+  .row-acts{justify-content:flex-end!important;gap:6px}
+  .row-acts .btn + .btn{margin-left:0}
+  .tbl.roster-tbl tr{display:grid;grid-template-columns:1fr auto;gap:3px 10px;padding:16px}
+  .tbl.roster-tbl td{border:0!important;padding:0;display:block;text-align:left;height:auto}
+  .tbl.roster-tbl td::before{display:none}
+  .tbl.roster-tbl td:nth-child(1){grid-column:1;grid-row:1;font-size:17px}
+  .tbl.roster-tbl td:nth-child(4){grid-column:2;grid-row:1;text-align:right}
+  .tbl.roster-tbl td:nth-child(2),.roster-tbl td:nth-child(3){grid-column:1/-1;color:var(--muted);font-size:13.5px}
+  .tbl.roster-tbl td.row-acts{grid-column:1/-1;display:flex;margin-top:10px;padding-top:12px;border-top:1px solid var(--sep-2)!important}
+  .tbl.roster-tbl td.row-acts .btn{flex:1;height:34px}
   .vh-actions > .seg{grid-column:1/-1}
   .vh-actions .btn{padding:0 6px}
   .vh-actions > input,.vh-actions > select{flex:1;min-width:0}

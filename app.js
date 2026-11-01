@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=16";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=17";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -31,9 +31,12 @@ function toast(msg) {
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2500);
 }
 // App 風格對話框（取代瀏覽器內建 confirm / alert）
-function appDialog({ title = "", message = "", buttons = [{ text: "好", value: true, style: "primary" }] }) {
+function appDialog({ title = "", message = "", buttons = [{ text: "好", value: true, style: "primary" }], input = null }) {
   return new Promise(resolve => {
     const mask = $("#dlg");
+    const inp = $("#dlgInput");
+    inp.classList.toggle("hidden", !input);
+    if (input) { inp.type = input.type || "text"; inp.value = input.value || ""; inp.placeholder = input.placeholder || ""; }
     $("#dlgTitle").textContent = title;
     $("#dlgMsg").textContent = message;
     $("#dlgTitle").classList.toggle("hidden", !title);
@@ -46,7 +49,8 @@ function appDialog({ title = "", message = "", buttons = [{ text: "好", value: 
       if (!btn) return;
       mask.classList.remove("open");
       setTimeout(() => mask.classList.add("hidden"), 180);
-      resolve(buttons[+btn.dataset.i].value);
+      const v = buttons[+btn.dataset.i].value;
+      resolve(input && v === true ? inp.value : v);
     };
   });
 }
@@ -312,7 +316,7 @@ const loaders = {
   mySchedule: loadMySchedule,
   employees: loadEmployeesView,
   shifts: renderShiftList,
-  scheduling: loadScheduling,
+  scheduling: loadSchedulingView,
   report: loadReport
 };
 const TITLES = {
@@ -328,6 +332,7 @@ function showView(name) {
   $("#pageTitle").textContent = innerWidth <= 768 ? TITLES[name] : "打卡系統";
   closeSheet();
   scrollTo(0, 0);
+  if (name === "scheduling" && !$("#view-scheduling").dataset.keep) schMode = "list";
   loaders[name]?.().catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); });
 }
 $$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));
@@ -1297,32 +1302,147 @@ async function saveCell(key, ids, cell) {
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 }
 
-$("#copyPrevBtn").onclick = async () => {
-  const month = $("#schMonth").value;
-  const prev = prevMonth(month);
-  if (!(await appConfirm("複製上月班表", `將 ${prev} 的班表依「星期幾」對應複製到 ${month}？本月已排的同一天會被覆蓋。`, { okText: "複製" }))) return;
-  const snap = await getDocs(query(collection(db, "schedules"), where("month", "==", prev)));
+// 依「星期幾」把 src 月份的班表（含設定）複製到 dst 月份
+async function copyRoster(src, dst) {
+  await Promise.all([loadEmployees(), loadShiftTypes()]);
+  const [snap, rSnap] = await Promise.all([
+    getDocs(query(collection(db, "schedules"), where("month", "==", src))),
+    getDoc(doc(db, "rosters", src))
+  ]);
+  const srcR = rSnap.exists() ? rSnap.data() : {};
   const tpl = {};
   snap.docs.map(d => d.data()).sort((a, b) => a.date.localeCompare(b.date)).forEach(s => {
-    const wd = new Date(s.date + "T00:00:00").getDay();
-    tpl[`${s.empId}_${wd}`] = s.shiftIds;
+    tpl[`${s.empId}_${new Date(s.date + "T00:00:00").getDay()}`] = s.shiftIds;
   });
+  const emps = srcR.empIds?.length ? activeEmployees().filter(u => srcR.empIds.includes(u.id)) : activeEmployees();
   let batch = writeBatch(db), n = 0, total = 0;
-  for (const u of rosterEmps()) {
-    for (const d of daysOfMonth(month)) {
+  for (const u of emps) {
+    for (const d of daysOfMonth(dst)) {
       const ids = tpl[`${u.id}_${d.getDay()}`];
       if (!ids?.length) continue;
       const date = ymd(d);
-      batch.set(doc(db, "schedules", `${u.id}_${date}`), { empId: u.id, date, month, shiftIds: ids });
+      batch.set(doc(db, "schedules", `${u.id}_${date}`), { empId: u.id, date, month: dst, shiftIds: ids });
       total++;
       if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; }
     }
   }
-  if (!total) return toast("上月沒有班表可複製");
   if (n) await batch.commit();
-  toast(`已複製 ${total} 筆`);
-  markEdited();
-  loadScheduling();
+  const [y, m] = dst.split("-");
+  await setDoc(doc(db, "rosters", dst), {
+    name: `${y}/${m}月班表`, visibility: srcR.visibility || "self",
+    shiftIds: srcR.shiftIds || [], empIds: srcR.empIds || [], editedAt: serverTimestamp()
+  }, { merge: true });
+  history.month = null;
+  return total;
+}
+
+$("#copyPrevBtn").onclick = async () => {
+  const month = $("#schMonth").value;
+  const prev = prevMonth(month);
+  if (!(await appConfirm("複製上月班表", `將 ${prev} 的班表依「星期幾」對應複製到 ${month}？本月已排的同一天會被覆蓋。`, { okText: "複製" }))) return;
+  try {
+    const total = await copyRoster(prev, month);
+    toast(total ? `已複製 ${total} 筆` : "上月沒有排班可複製");
+    loadScheduling();
+  } catch (err) { toast("複製失敗：" + errMsg(err)); }
+};
+
+/* ---------- 班表列表 ---------- */
+let schMode = "list";
+function loadSchedulingView() {
+  $("#schListView").classList.toggle("hidden", schMode !== "list");
+  $("#schEditor").classList.toggle("hidden", schMode !== "edit");
+  return schMode === "list" ? loadRosterList() : loadScheduling();
+}
+function openRosterEditor(month) {
+  schMode = "edit";
+  $("#schMonth").value = month;
+  scrollTo(0, 0);
+  return loadSchedulingView();
+}
+$("#schBack").onclick = () => { schMode = "list"; scrollTo(0, 0); loadSchedulingView(); };
+
+const rosterState = r => {
+  const pub = tsMs(r.publishedAt);
+  return !pub ? `<span class="badge gray">尚未發布</span>`
+    : tsMs(r.editedAt) > pub ? `<span class="badge orange">有未發布的變更</span>`
+    : `<span class="badge green">已發布</span>`;
+};
+
+async function loadRosterList() {
+  const snap = await getDocs(collection(db, "rosters"));
+  const list = snap.docs.map(d => ({ month: d.id, ...d.data() }))
+    .filter(r => /^\d{4}-\d{2}$/.test(r.month))
+    .sort((a, b) => b.month.localeCompare(a.month));
+  $("#rosterList").innerHTML = list.map(r => {
+    const [y, m] = r.month.split("-");
+    const last = new Date(+y, +m, 0).getDate();
+    return `<tr data-m="${r.month}">
+      <td><a class="roster-name" data-act="edit">${esc(r.name || `${y}/${m}月班表`)}</a></td>
+      <td>${r.month}-01 ~ ${r.month}-${last}</td>
+      <td>${VIS_LABEL[r.visibility] || VIS_LABEL.self}</td>
+      <td>${rosterState(r)}</td>
+      <td class="row-acts">
+        <button class="btn small primary" data-act="edit">編輯</button>
+        <button class="btn small" data-act="copy">複製</button>
+        <button class="btn small danger" data-act="del">刪除</button>
+      </td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="empty">還沒有任何班表，按右上角「＋ 新增班表」開始，或「匯入 Excel」匯入舊班表。</td></tr>`;
+}
+
+$("#rosterList").onclick = async e => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const month = btn.closest("tr").dataset.m;
+  const act = btn.dataset.act;
+  if (act === "edit") return openRosterEditor(month);
+  if (act === "copy") {
+    const [y, m] = month.split("-").map(Number);
+    const dst = await appDialog({
+      title: "複製班表", message: `把 ${month} 的班表（含設定）依「星期幾」複製到：`,
+      input: { type: "month", value: ym(new Date(y, m, 1)) },
+      buttons: [{ text: "取消", value: false }, { text: "複製", value: true, style: "primary" }]
+    });
+    if (!dst) return;
+    if (dst === month) return toast("請選擇不同的月份");
+    toast("複製中…");
+    try {
+      const total = await copyRoster(month, dst);
+      toast(`已複製 ${total} 筆到 ${dst}`);
+      loadRosterList();
+    } catch (err) { toast("複製失敗：" + errMsg(err)); }
+  }
+  if (act === "del") {
+    if (!(await appConfirm("刪除班表", `確定刪除 ${month} 的班表？這個月所有的排班資料都會一起刪除，無法復原。`, { okText: "刪除", danger: true }))) return;
+    try {
+      const snap = await getDocs(query(collection(db, "schedules"), where("month", "==", month)));
+      let batch = writeBatch(db), n = 0;
+      for (const d of snap.docs) { batch.delete(d.ref); if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; } }
+      batch.delete(doc(db, "rosters", month));
+      batch.delete(doc(db, "rosterPublic", month));
+      await batch.commit();
+      history.month = null;
+      toast(`已刪除 ${month} 的班表`);
+      loadRosterList();
+    } catch (err) { toast("刪除失敗：" + errMsg(err)); }
+  }
+};
+
+$("#newRosterBtn").onclick = async () => {
+  const d = new Date();
+  const month = await appDialog({
+    title: "新增班表", message: "選擇要排班的月份",
+    input: { type: "month", value: ym(new Date(d.getFullYear(), d.getMonth() + 1, 1)) },
+    buttons: [{ text: "取消", value: false }, { text: "建立", value: true, style: "primary" }]
+  });
+  if (!month) return;
+  const ex = await getDoc(doc(db, "rosters", month));
+  if (!ex.exists()) {
+    const [y, m] = month.split("-");
+    await setDoc(doc(db, "rosters", month), { name: `${y}/${m}月班表`, visibility: "self", shiftIds: [], empIds: [], editedAt: serverTimestamp() });
+  }
+  openRosterEditor(month);
 };
 
 /* ================= 出勤報表（管理者） ================= */
@@ -1407,8 +1527,6 @@ $("#csvBtn").onclick = () => {
   URL.revokeObjectURL(a.href);
 };
 
-/* ================= 啟動 ================= */
-boot();
 
 /* ================= 匯入舊班表 Excel（管理者） ================= */
 // 解析舊系統匯出的班表 Excel（每週一區塊：日期列 + 員工列）
@@ -1551,6 +1669,8 @@ async function importRoster(r) {
   history.month = null;   // 讓推薦重新讀取歷史
   await loadShiftTypes();
   await appAlert("匯入完成", `已匯入 ${done} 筆排班資料。` + (choice === "create" && missing.length ? `\n新建立的 ${missing.length} 位員工請到「員工管理」補上 Email，才能用 LINE 綁定。` : ""));
-  $("#schMonth").value = dates[0].slice(0, 7);
-  loadScheduling();
+  openRosterEditor(dates[0].slice(0, 7));
 }
+
+/* ================= 啟動 ================= */
+boot();
