@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=17";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=18";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1194,17 +1194,20 @@ function analyze(empId, ds) {
     const i = k.lastIndexOf("_");
     if (k.slice(i + 1) !== ds) rows.push([k.slice(0, i), k.slice(i + 1), ids]);
   }
-  const mine = {}, all = {}, who = {};
+  const mine = {}, all = {}, who = {}, mineAll = {}, whoAll = {};
   for (const [e, d, ids] of rows) {
-    if (wdOf(d) !== wd) continue;
+    const same = wdOf(d) === wd;
     for (const id of ids) {
+      if (e === empId) mineAll[id] = (mineAll[id] || 0) + 1;
+      (whoAll[id] ??= {})[e] = (whoAll[id][e] || 0) + 1;
+      if (!same) continue;
       all[id] = (all[id] || 0) + 1;
       if (e === empId) mine[id] = (mine[id] || 0) + 1;
       (who[id] ??= {})[e] = (who[id][e] || 0) + 1;
     }
   }
   const topWho = id => {
-    const best = Object.entries(who[id] || {}).sort((a, b) => b[1] - a[1])[0];
+    const best = Object.entries(who[id] || whoAll[id] || {}).sort((a, b) => b[1] - a[1])[0];
     return best ? { name: empName(best[0]), n: best[1], isMe: best[0] === empId } : null;
   };
   const allowed = new Set(rosterShifts().map(s => s.id));
@@ -1215,7 +1218,9 @@ function analyze(empId, ds) {
       .sort((a, b) => b[1] - a[1]).slice(0, 4 - rec.length)
       .forEach(([id, n]) => rec.push({ id, n, src: "all", top: topWho(id) }));
   }
-  return { wd, rec, topWho };
+  // 智能排序分數：本人同星期幾 > 本人全部 > 全部人同星期幾
+  const score = id => (mine[id] || 0) * 1000 + (mineAll[id] || 0) * 20 + (all[id] || 0);
+  return { wd, rec, topWho, score, mine, mineAll };
 }
 
 // ---- 點日期：班別選單 ----
@@ -1238,7 +1243,7 @@ function closeDay() {
 function renderDay() {
   if (!dp) return;
   const ids = schedMap[dp.key] || [];
-  const { wd, rec, topWho } = analyze(dp.empId, dp.ds);
+  const { wd, rec, topWho, score, mine, mineAll } = analyze(dp.empId, dp.ds);
   const W = `週${WEEK[wd]}`;
   $("#dpCurrent").innerHTML = ids.map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
 
@@ -1255,12 +1260,20 @@ function renderDay() {
   }).join("");
 
   const f = $("#dpFilter").value.trim().toLowerCase();
-  const list = rosterShifts().filter(s => !f || s.name.toLowerCase().includes(f) || (s.code || "").toLowerCase().includes(f));
-  $("#dpList").innerHTML = list.map(s => {
+  const list = rosterShifts()
+    .filter(s => !f || s.name.toLowerCase().includes(f) || (s.code || "").toLowerCase().includes(f))
+    .map((s, i) => ({ s, i, sc: score(s.id) }))
+    .sort((a, b) => (ids.includes(b.s.id) - ids.includes(a.s.id)) || (b.sc - a.sc) || (a.i - b.i));
+  let shownHot = false, shownRest = false;
+  $("#dpList").innerHTML = list.map(({ s, sc }) => {
     const t = topWho(s.id);
-    const sub = [s.start && s.end ? `${s.start}–${s.end}` : (s.cat === "leave" ? "休假" : ""),
-                 t ? `${W}常由${t.isMe ? "他本人" : " " + esc(t.name)}` : ""].filter(Boolean).join(" · ");
-    return `<label class="check-item"><input type="checkbox" data-sid="${s.id}" ${ids.includes(s.id) ? "checked" : ""}>
+    const freq = [mine[s.id] ? `他${W} ${mine[s.id]} 次` : "", mineAll[s.id] ? `共 ${mineAll[s.id]} 次` : ""].filter(Boolean).join("・");
+    const sub = [freq, s.start && s.end ? `${s.start}–${s.end}` : (s.cat === "leave" ? "休假" : ""),
+                 t && !t.isMe ? `常由 ${esc(t.name)}` : ""].filter(Boolean).join(" · ");
+    let head = "";
+    if (!f && sc > 0 && !shownHot) { shownHot = true; head = `<div class="list-head">常排班別</div>`; }
+    if (!f && sc === 0 && shownHot && !shownRest) { shownRest = true; head = `<div class="list-head">其他班別</div>`; }
+    return `${head}<label class="check-item ${mineAll[s.id] ? "hot" : ""}"><input type="checkbox" data-sid="${s.id}" ${ids.includes(s.id) ? "checked" : ""}>
       <span class="dot" style="background:${esc(s.color)}"></span>
       <span class="ci-main"><span class="ci-name">${esc(s.name)}</span>${sub ? `<span class="ci-sub">${sub}</span>` : ""}</span></label>`;
   }).join("") || `<p class="empty">找不到班別</p>`;
@@ -1302,7 +1315,45 @@ async function saveCell(key, ids, cell) {
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 }
 
-// 依「星期幾」把 src 月份的班表（含設定）複製到 dst 月份
+// 一週一週對應：來源月份「完整的週」（週一～週日，月內至少 4 天）依序套到目標月份的每一週，不夠就循環
+function weekBlocks(month) {
+  const days = daysOfMonth(month);
+  const blocks = [];
+  for (const d of days) {
+    const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const k = ymd(mon);
+    if (!blocks.length || blocks.at(-1).monday !== k) blocks.push({ monday: k, days: [] });
+    blocks.at(-1).days.push(ymd(d));
+  }
+  return blocks;
+}
+function weekMapping(src, dst) {
+  let sw = weekBlocks(src).filter(b => b.days.length >= 4);
+  if (!sw.length) sw = weekBlocks(src);
+  const map = {}, lines = [];
+  weekBlocks(dst).forEach((tw, i) => {
+    const sb = sw[i % sw.length];
+    const srcByWd = {};
+    // 這一週以外，也備好其他週同星期幾的日期，當這週缺那天時遞補
+    sw.forEach(b => b.days.forEach(ds => { const w = wdOf(ds); srcByWd[w] ??= []; srcByWd[w].push({ ds, own: b === sb }); }));
+    tw.days.forEach(ds => {
+      const w = wdOf(ds);
+      const cand = srcByWd[w] || [];
+      // 這週有那天就用；沒有就取離這週最近的同星期幾
+      const base = new Date(sb.monday + "T00:00:00").getTime();
+      const pick = cand.find(c => c.own) ||
+        [...cand].sort((a, b) => Math.abs(new Date(a.ds + "T00:00:00") - base) - Math.abs(new Date(b.ds + "T00:00:00") - base))[0];
+      if (pick) map[ds] = pick.ds;
+    });
+    const md = ds => `${+ds.slice(5, 7)}/${+ds.slice(8)}`;
+    const used = tw.days.map(ds => map[ds]).filter(Boolean).sort();
+    const rng = (a, b) => a === b ? md(a) : `${md(a)}–${md(b)}`;
+    if (used.length) lines.push(`${rng(tw.days[0], tw.days.at(-1))}　←　${rng(used[0], used.at(-1))}`);
+  });
+  return { map, lines };
+}
+
+// 把 src 月份的班表（含設定）一週一週複製到 dst 月份
 async function copyRoster(src, dst) {
   await Promise.all([loadEmployees(), loadShiftTypes()]);
   const [snap, rSnap] = await Promise.all([
@@ -1310,17 +1361,16 @@ async function copyRoster(src, dst) {
     getDoc(doc(db, "rosters", src))
   ]);
   const srcR = rSnap.exists() ? rSnap.data() : {};
-  const tpl = {};
-  snap.docs.map(d => d.data()).sort((a, b) => a.date.localeCompare(b.date)).forEach(s => {
-    tpl[`${s.empId}_${new Date(s.date + "T00:00:00").getDay()}`] = s.shiftIds;
-  });
+  const srcMap = {};
+  snap.docs.forEach(d => { const x = d.data(); srcMap[`${x.empId}_${x.date}`] = x.shiftIds || []; });
+  const { map } = weekMapping(src, dst);
   const emps = srcR.empIds?.length ? activeEmployees().filter(u => srcR.empIds.includes(u.id)) : activeEmployees();
   let batch = writeBatch(db), n = 0, total = 0;
   for (const u of emps) {
     for (const d of daysOfMonth(dst)) {
-      const ids = tpl[`${u.id}_${d.getDay()}`];
-      if (!ids?.length) continue;
       const date = ymd(d);
+      const ids = map[date] && srcMap[`${u.id}_${map[date]}`];
+      if (!ids?.length) continue;
       batch.set(doc(db, "schedules", `${u.id}_${date}`), { empId: u.id, date, month: dst, shiftIds: ids });
       total++;
       if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; }
@@ -1339,7 +1389,7 @@ async function copyRoster(src, dst) {
 $("#copyPrevBtn").onclick = async () => {
   const month = $("#schMonth").value;
   const prev = prevMonth(month);
-  if (!(await appConfirm("複製上月班表", `將 ${prev} 的班表依「星期幾」對應複製到 ${month}？本月已排的同一天會被覆蓋。`, { okText: "複製" }))) return;
+  if (!(await appConfirm("複製上月班表", `將 ${prev} 一週一週複製到 ${month}：\n\n${weekMapping(prev, month).lines.join("\n")}\n\n本月已排的同一天會被覆蓋。`, { okText: "複製" }))) return;
   try {
     const total = await copyRoster(prev, month);
     toast(total ? `已複製 ${total} 筆` : "上月沒有排班可複製");
@@ -1400,12 +1450,13 @@ $("#rosterList").onclick = async e => {
   if (act === "copy") {
     const [y, m] = month.split("-").map(Number);
     const dst = await appDialog({
-      title: "複製班表", message: `把 ${month} 的班表（含設定）依「星期幾」複製到：`,
+      title: "複製班表", message: `把 ${month} 的班表（含設定）一週一週複製到：`,
       input: { type: "month", value: ym(new Date(y, m, 1)) },
       buttons: [{ text: "取消", value: false }, { text: "複製", value: true, style: "primary" }]
     });
     if (!dst) return;
     if (dst === month) return toast("請選擇不同的月份");
+    if (!(await appConfirm("確認週對應", `${month} → ${dst}，一週一週對應如下：\n\n${weekMapping(month, dst).lines.join("\n")}\n\n${dst} 已排的同一天會被覆蓋。`, { okText: "開始複製" }))) return;
     toast("複製中…");
     try {
       const total = await copyRoster(month, dst);
