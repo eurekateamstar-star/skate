@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=7";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=8";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -650,6 +650,69 @@ $("#shiftList").onclick = async e => {
   await deleteDoc(doc(db, "shiftTypes", id));
   toast("已刪除");
   renderShiftList();
+};
+
+// ---- 批次新增班別 ----
+const COLOR_RULES = [
+  [/接送|交通車/, "#3d9a3a"],
+  [/溜冰場/, "#3a3f44"],
+  [/學校課堂/, "#2f6fb5"],
+  [/加課|加強/, "#d9822b"],
+  [/晨訓/, "#7b4fb0"],
+  [/校隊/, "#b03a5b"]
+];
+const FALLBACK_COLORS = ["#0f8b8d", "#8d6e63", "#5c6bc0", "#c0392b", "#16a085", "#6d4c41"];
+const LEAVE_COLOR = "#9aa0a6";
+
+function parseTimes(name) {
+  const m = name.match(/(\d{1,2}):?(\d{2})\s*[-~～－]\s*(\d{1,2}):?(\d{2})/);
+  if (!m || +m[1] > 23 || +m[3] > 23 || +m[2] > 59 || +m[4] > 59) return ["", ""];
+  return [`${pad(+m[1])}:${m[2]}`, `${pad(+m[3])}:${m[4]}`];
+}
+
+async function addShiftsBulk(items) {
+  await loadShiftTypes();
+  const exist = new Set(shiftTypes.map(s => s.name));
+  let batch = writeBatch(db), n = 0, add = 0, skip = 0, fb = 0;
+  const base = Date.now();
+  items.forEach((it, i) => {
+    if (!it.name || exist.has(it.name)) { skip++; return; }
+    exist.add(it.name);
+    let color = it.color;
+    if (!color) {
+      if (it.cat === "leave") color = LEAVE_COLOR;
+      else color = (COLOR_RULES.find(([re]) => re.test(it.name)) || [, FALLBACK_COLORS[fb++ % FALLBACK_COLORS.length]])[1];
+    }
+    batch.set(doc(collection(db, "shiftTypes")), {
+      cat: it.cat || "shift", name: it.name, start: it.start || "", end: it.end || "", color, order: base + i
+    });
+    add++; n++;
+  });
+  if (n) await batch.commit();
+  toast(`已新增 ${add} 個班別${skip ? `，略過重複 ${skip} 個` : ""}`);
+  renderShiftList();
+}
+
+$("#shiftBulkBtn").onclick = async () => {
+  const items = $("#shiftBulk").value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
+    const parts = line.split(/\t|,/).map(x => x.trim());
+    const name = parts[0];
+    const cat = parts.some(p => /^(休假|leave)$/i.test(p)) ? "leave" : "shift";
+    const times = parts.slice(1).filter(p => /^\d{1,2}:\d{2}$/.test(p));
+    const [start, end] = times.length === 2 ? times.map(t => t.padStart(5, "0")) : (cat === "leave" ? ["", ""] : parseTimes(name));
+    return { name, cat, start, end };
+  });
+  if (!items.length) return toast("請先輸入班別名稱");
+  $("#shiftBulkBtn").disabled = true;
+  try { await addShiftsBulk(items); $("#shiftBulk").value = ""; }
+  catch (err) { toast("新增失敗：" + errMsg(err)); }
+  finally { $("#shiftBulkBtn").disabled = false; }
+};
+
+$("#leaveDefaultBtn").onclick = async () => {
+  try {
+    await addShiftsBulk(["國定假日", "休息日", "例假日", "空班"].map(name => ({ name, cat: "leave" })));
+  } catch (err) { toast("新增失敗：" + errMsg(err)); }
 };
 
 /* ================= 排班作業（管理者） ================= */

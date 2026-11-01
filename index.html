@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>打卡系統</title>
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -163,6 +163,15 @@
           </form>
           <p class="hint">休假類（國定假日、例假日…）可不填時間。有填時間的班別會用來判斷遲到 / 早退。</p>
         </div>
+        <div class="card">
+          <h3>批次新增班別</h3>
+          <textarea id="shiftBulk" rows="6" placeholder="每行一個班別名稱，例：&#10;迎風溜冰場(晨訓)&#10;麗小晨訓0740-0830&#10;接送車去程(1530-1600)六日&#10;名稱裡有時間（0740-0830、14:00-15:00）會自動帶入；休假類請在後面加「,休假」"></textarea>
+          <div class="form-row" style="margin-top:8px">
+            <button class="btn primary" id="shiftBulkBtn">批次新增</button>
+            <button class="btn" id="leaveDefaultBtn">一鍵加入預設休假</button>
+            <span class="hint" style="margin:0">名稱重複的會略過；顏色依名稱自動分類，之後可刪除重建。</span>
+          </div>
+        </div>
         <div class="card table-wrap">
           <table class="tbl">
             <thead><tr><th>類別</th><th>名稱</th><th>時間</th><th></th></tr></thead>
@@ -230,6 +239,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=7"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>
