@@ -12,7 +12,7 @@ export const firebaseConfig = {
 };
 
 // 2. LIFF ID：LINE Developers → 你的 LINE Login Channel → LIFF 分頁
-export const LIFF_ID = "0000000000-xxxxxxxx";
+export const LIFF_ID = "2012318362-VOU7aFr9";
 
 // 3. Cloudflare Worker 網址（部署 worker.js 後取得，結尾不要加 /）
 export const WORKER_URL = "https://punch-auth.eurekateamstar.workers.dev";
