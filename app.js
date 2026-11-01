@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=32";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=33";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -2338,8 +2338,13 @@ $("#payCsv").onclick = () => {
 
 // ---- 薪資標準（單價表）----
 function renderRates() {
-  const emps = activeEmployees();
-  const shifts = shiftTypes.filter(s => s.cat !== "leave");
+  // 有設定單價的排前面（越多人有單價越前面），全空白的放最後
+  const cntS = id => Object.values(pay.rates).filter(r => +r?.[id] > 0).length;
+  const cntE = id => Object.values(pay.rates[id] || {}).filter(v => +v > 0).length;
+  const emps = activeEmployees().map((u, i) => ({ u, i, n: cntE(u.id) }))
+    .sort((a, b) => (b.n > 0) - (a.n > 0) || a.i - b.i).map(x => x.u);
+  const shifts = shiftTypes.filter(s => s.cat !== "leave").map((s, i) => ({ s, i, n: cntS(s.id) }))
+    .sort((a, b) => b.n - a.n || a.i - b.i).map(x => x.s);
   $("#rateTbl").innerHTML = `<thead><tr><th class="rc">班別</th>${emps.map(u => `<th>${esc(u.name)}<small>${esc(u.empNo || "")}</small></th>`).join("")}</tr></thead>
     <tbody>${shifts.map(s => `<tr><th class="rc"><span class="dot" style="background:${esc(s.color)}"></span>${esc(s.name)}</th>${emps.map(u =>
       `<td><input type="number" min="0" step="50" data-e="${u.id}" data-s="${s.id}" value="${pay.rates[u.id]?.[s.id] || ""}"></td>`).join("")}</tr>`).join("")}</tbody>`;

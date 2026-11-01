@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=32">
+  <link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
 
@@ -174,7 +174,7 @@
             </div>
             <div class="vh-actions two">
               <button class="btn" id="importXlsxBtn">匯入 Excel</button>
-              <input type="file" id="xlsxInput" accept=".xlsx,.xls" hidden>
+              <input type="file" id="xlsxInput" accept=".xlsx,.xlsm,.xls" hidden>
               <button class="btn primary" id="newRosterBtn">＋ 新增班表</button>
             </div>
           </div>
@@ -240,7 +240,7 @@
           <div class="vh-actions">
             <input type="month" id="repMonth">
             <button class="btn" id="punchImportBtn">匯入打卡紀錄</button>
-            <input type="file" id="punchXlsx" accept=".xlsx,.xls" hidden>
+            <input type="file" id="punchXlsx" accept=".xlsx,.xlsm,.xls,.csv" hidden>
             <button class="btn" id="csvBtn">匯出 CSV</button>
           </div>
         </div>
@@ -327,7 +327,7 @@
               <span class="pf-label">每個人每個班別的課堂單價（元／堂）</span>
               <div class="pf-actions">
                 <button class="btn" id="rateImportBtn">從 Excel 匯入</button>
-                <input type="file" id="rateXlsx" accept=".xlsx,.xls" hidden>
+                <input type="file" id="rateXlsx" accept=".xlsx,.xlsm,.xls" hidden>
                 <button class="btn primary" id="rateSave">儲存</button>
               </div>
             </div>
@@ -557,6 +557,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=32"></script>
+<script type="module" src="app.js?v=33"></script>
 </body>
 </html>
