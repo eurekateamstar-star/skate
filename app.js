@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=30";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=31";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1996,14 +1996,15 @@ function punchDetail(r, kind, plan, ds) {
   }
   const t = hm(r.t);
   const loc = locMap[r.locationId];
-  const place = loc ? `GPS（${loc.name}）` : (r.lat != null ? "GPS" : "—");
+  const place = loc ? `GPS（${loc.name}）` : r.placeName ? `GPS（${r.placeName}）` : (r.lat != null ? "GPS" : "—");
   let abn = "", late = 0, early = 0;
   if (plan) {
     const diff = minOf(t) - minOf(plan);
     if (kind === "in" && diff > 0) { abn = `遲到 ${diff} 分鐘`; late = diff; }
     if (kind === "out" && diff < 0) { abn = `早退 ${-diff} 分鐘`; early = -diff; }
   }
-  return { r, time: t, place, reason: r.outOfRange ? (r.reason || "範圍外") + (r.dist != null ? `（距離 ${r.dist} 公尺）` : "") : "", abn, late, early, far: !!r.outOfRange };
+  const reason = r.outOfRange ? (r.reason || "範圍外") + (r.dist != null && !r.imported ? `（距離 ${r.dist} 公尺）` : "") : "";
+  return { r, time: t, place, reason: [reason, r.note].filter(Boolean).join("；"), abn, late, early, far: !!r.outOfRange };
 }
 
 async function loadReport() {
@@ -2122,6 +2123,131 @@ $("#csvBtn").onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
+
+/* ================= 匯入舊系統打卡紀錄 Excel（管理者） ================= */
+// 支援「Log 紀錄」工作表（每列一次打卡），沒有的話用「打卡紀錄」工作表（每列含上下班）
+function parsePunchWorkbook(XLSX, wb) {
+  const pad = n => String(n).padStart(2, "0");
+  const clean = v => { const t = String(v ?? "").trim(); return t === "--" ? "" : t; };
+  const toDate = v => {
+    if (v instanceof Date) return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+    const m = clean(v).match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+    return m ? `${m[1]}-${pad(m[2])}-${pad(m[3])}` : null;
+  };
+  const toTime = v => { const m = clean(v).match(/^(\d{1,2}):(\d{2})/); return m ? `${pad(m[1])}:${m[2]}` : null; };
+  const coord = v => {   // "GPS (121.57，25.08)" → 經度在前
+    const m = clean(v).match(/(-?\d{1,3}\.\d+)\s*[，,]\s*(-?\d{1,3}\.\d+)/);
+    if (!m) return null;
+    let a = +m[1], b = +m[2];
+    return Math.abs(a) > 90 ? { lat: b, lng: a } : { lat: a, lng: b };
+  };
+  const place = v => clean(v).replace(/^GPS\s*\/\s*/i, "").replace(/^GPS$/i, "");
+  const sheets = wb.SheetNames.map(n => ({ n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: "" }) }))
+    .filter(x => x.rows[0]?.includes("上班打卡時間") && x.rows[0]?.includes("下班打卡時間"));
+  const pick = sheets.find(x => /log/i.test(x.n)) || sheets.find(x => !x.rows[0].includes("表定上班時間")) || sheets[0];
+  if (!pick) return [];
+  const H = pick.rows[0], col = name => H.indexOf(name);
+  const C = {
+    no: col("員工編號"), name: col("姓名"), date: col("打卡日期"), shift: col("班別"),
+    inT: col("上班打卡時間"), outT: col("下班打卡時間"), note: col("紀錄備註"),
+    early: col("提早上班原因"), late: col("延後下班原因"),
+    inM: col("上班打卡方式"), inP: col("上班打卡地點"), inR: col("上班地點異常，不在範圍內的原因"),
+    outM: col("下班打卡方式"), outP: col("下班打卡地點"), outR: col("下班地點異常，不在範圍內的原因")
+  };
+  const out = [];
+  for (const r of pick.rows.slice(1)) {
+    const date = toDate(r[C.date]);
+    if (!date || !clean(r[C.name])) continue;
+    const base = { empNo: clean(r[C.no]), name: clean(r[C.name]), date, shiftName: clean(r[C.shift]), note: clean(r[C.note]) };
+    const add = (type, t, m, p, rs, extra) => {
+      if (!t) return;
+      out.push({ ...base, type, time: t, place: place(r[m]), pos: coord(r[p]), reason: clean(r[rs]), extra: clean(r[extra]) });
+    };
+    add("in", toTime(r[C.inT]), C.inM, C.inP, C.inR, C.early);
+    add("out", toTime(r[C.outT]), C.outM, C.outP, C.outR, C.late);
+  }
+  return out;
+}
+
+$("#punchImportBtn").onclick = () => $("#punchXlsx").click();
+$("#punchXlsx").onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  toast("讀取檔案中…");
+  try {
+    const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
+    const wb = XLSX.read(await file.arrayBuffer(), { cellDates: false, raw: false });
+    await importPunches(parsePunchWorkbook(XLSX, wb));
+  } catch (err) {
+    console.error(err);
+    appAlert("匯入失敗", err.message || String(err));
+  }
+};
+
+async function importPunches(list) {
+  if (!list.length) return appAlert("找不到打卡紀錄", "需要有「員工編號、姓名、打卡日期、班別、上班打卡時間、下班打卡時間」欄位。");
+  await Promise.all([loadEmployees(), loadShiftTypes(), loadLocations()]);
+  const norm = s => String(s || "").replace(/\s+/g, "").toLowerCase();
+  const byNo = {}, byName = {};
+  employees.forEach(u => { if (u.empNo) byNo[norm(u.empNo)] = u; byName[norm(u.name)] = u; });
+  const findEmp = x => byNo[norm(x.empNo)] || byName[norm(x.name)];
+  const shiftBy = {}; shiftTypes.forEach(s => shiftBy[norm(s.name)] = s);
+  const locBy = {}; locations.forEach(l => locBy[norm(l.name)] = l);
+
+  const missEmp = [...new Set(list.filter(x => !findEmp(x)).map(x => `${x.name}(${x.empNo})`))];
+  const missShift = [...new Set(list.filter(x => x.shiftName && !shiftBy[norm(x.shiftName)]).map(x => x.shiftName))];
+  const ok = list.filter(findEmp);
+  const dates = list.map(x => x.date).sort();
+  const far = ok.filter(x => x.reason).length;
+  const msg = [
+    `期間：${dates[0]} ~ ${dates.at(-1)}`,
+    `打卡筆數：${ok.length} 筆（上班 ${ok.filter(x => x.type === "in").length}、下班 ${ok.filter(x => x.type === "out").length}）`,
+    `員工：${new Set(ok.map(x => findEmp(x).id)).size} 位對應成功` + (missEmp.length ? `\n略過（系統中沒有）：${missEmp.join("、")}` : ""),
+    missShift.length ? `班別對不到（仍會匯入，只記名稱）：${missShift.join("、")}` : "班別全部對應成功",
+    far ? `含地點異常原因 ${far} 筆` : "",
+    "",
+    "同一筆紀錄重複匯入會覆蓋，不會重複。"
+  ].filter(x => x !== "").join("\n");
+  if (!(await appConfirm("匯入打卡紀錄", msg, { okText: "匯入" }))) return;
+
+  toast("匯入中…");
+  const hash = str => { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); };
+  let batch = writeBatch(db), n = 0, done = 0;
+  try {
+    for (const x of ok) {
+      const u = findEmp(x);
+      const s = shiftBy[norm(x.shiftName)];
+      const loc = locBy[norm(x.place)];
+      const t = new Date(`${x.date}T${x.time}:00`);
+      let dist = null;
+      if (loc && x.pos) dist = Math.round(distM(x.pos, loc));
+      const id = `imp_${u.id}_${x.date}_${x.type}_${x.time.replace(":", "")}_${hash(x.shiftName)}`;
+      const note = [x.extra, x.note].filter(v => v && v.trim()).join("；");
+      batch.set(doc(db, "attendance", id), {
+        empId: u.id, name: u.name, empNo: u.empNo || "",
+        type: x.type, shiftId: s?.id || null, shiftName: x.shiftName,
+        locationId: loc?.id || null, placeName: x.place || "", dist,
+        date: x.date, month: x.date.slice(0, 7),
+        ts: t, clientTime: t.toISOString(),
+        lat: x.pos?.lat ?? null, lng: x.pos?.lng ?? null, acc: null,
+        outOfRange: !!x.reason, reason: x.reason || "", note,
+        imported: true, importedAt: serverTimestamp()
+      });
+      done++;
+      if (++n >= 400) { await batch.commit(); batch = writeBatch(db); n = 0; toast(`匯入中… ${done} / ${ok.length}`); }
+    }
+    if (n) await batch.commit();
+  } catch (err) {
+    console.error(err);
+    return appAlert("匯入失敗", err.code === "permission-denied"
+      ? `已匯入 ${done - n} 筆後被拒絕。請先到 Firebase → Firestore → 規則，貼上最新版 firestore.rules 並發布（管理者匯入需要新規則）。`
+      : (err.message || String(err)));
+  }
+  await appAlert("匯入完成", `已匯入 ${done} 筆打卡紀錄。`);
+  $("#repMonth").value = dates[0].slice(0, 7);
+  loadReport();
+}
 
 /* ================= 匯入舊班表 Excel（管理者） ================= */
 // 解析舊系統匯出的班表 Excel（每週一區塊：日期列 + 員工列）

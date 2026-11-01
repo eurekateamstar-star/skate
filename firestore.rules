@@ -81,11 +81,15 @@ service cloud.firestore {
     // 打卡：只能用自己的身分、伺服器時間、在打卡範圍內新增；不能修改或刪除
     match /attendance/{id} {
       allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
-      allow create: if bound()
+      allow create: if (bound()
                     && request.resource.data.empId == myEmpId()
                     && request.resource.data.ts == request.time
-                    && locationOk(request.resource.data);
-      allow update, delete: if isAdmin();
+                    && locationOk(request.resource.data))
+                    // 管理者匯入舊系統打卡紀錄
+                    || (isAdmin() && request.resource.data.imported == true);
+      // 管理者重新匯入同一筆（覆蓋）
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
   }
 }

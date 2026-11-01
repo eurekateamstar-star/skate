@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=30">
+  <link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
 
@@ -237,6 +237,8 @@
           </div>
           <div class="vh-actions">
             <input type="month" id="repMonth">
+            <button class="btn" id="punchImportBtn">匯入打卡紀錄</button>
+            <input type="file" id="punchXlsx" accept=".xlsx,.xls" hidden>
             <button class="btn" id="csvBtn">匯出 CSV</button>
           </div>
         </div>
@@ -495,6 +497,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=30"></script>
+<script type="module" src="app.js?v=31"></script>
 </body>
 </html>
