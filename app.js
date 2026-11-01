@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=28";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=29";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -660,21 +660,6 @@ async function punch(type, sid) {
   }
 }
 
-$("#otherPunchBtn").onclick = async () => {
-  const have = new Set(punchIds());
-  const opts = shiftTypes.filter(s => s.cat !== "leave" && !have.has(s.id));
-  if (!opts.length) return appAlert("沒有其他班別", "所有班別都已經在今天的打卡清單中。");
-  const sid = await appDialog({
-    title: "打其他班別的卡", message: "選擇要打卡的班別",
-    select: opts.map(s => ({ value: s.id, label: `${s.name}${s.start && s.end ? `（${s.start}-${s.end}）` : ""}` })),
-    buttons: [{ text: "取消", value: false }, { text: "加入", value: true, style: "primary" }]
-  });
-  if (!sid) return;
-  extraShifts.push(sid);
-  mapFitted = false;
-  renderPunchCards();
-  updateClockMap();
-};
 
 /* ================= 出勤彙整（共用） ================= */
 const toRec = d => { const r = d.data(); return { ...r, t: r.ts?.toDate() || new Date(r.clientTime) }; };
