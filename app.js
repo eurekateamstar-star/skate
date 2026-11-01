@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=18";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=19";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1179,7 +1179,7 @@ let history = { month: null, list: [] };
 async function loadHistory(month) {
   if (history.month === month) return;
   const [y, m] = month.split("-").map(Number);
-  const months = [1, 2, 3].map(i => ym(new Date(y, m - 1 - i, 1)));
+  const months = [1, 2, 3, 4, 5, 6].map(i => ym(new Date(y, m - 1 - i, 1)));
   const snap = await getDocs(query(collection(db, "schedules"), where("month", "in", months)));
   history = { month, list: snap.docs.map(d => d.data()) };
 }
@@ -1211,12 +1211,19 @@ function analyze(empId, ds) {
     return best ? { name: empName(best[0]), n: best[1], isMe: best[0] === empId } : null;
   };
   const allowed = new Set(rosterShifts().map(s => s.id));
-  const rec = Object.entries(mine).filter(([id, n]) => allowed.has(id) && n >= 2)
-    .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, n]) => ({ id, n, src: "mine" }));
-  if (rec.length < 4) {
-    Object.entries(all).filter(([id, n]) => allowed.has(id) && n >= 2 && !rec.some(r => r.id === id))
-      .sort((a, b) => b[1] - a[1]).slice(0, 4 - rec.length)
-      .forEach(([id, n]) => rec.push({ id, n, src: "all", top: topWho(id) }));
+  // 推薦只看本人：先「這個星期幾」最常排的，再依「全部日子」次數往下排
+  const rec = [];
+  Object.entries(mine).filter(([id]) => allowed.has(id))
+    .sort((a, b) => b[1] - a[1] || (mineAll[b[0]] || 0) - (mineAll[a[0]] || 0))
+    .forEach(([id, n]) => rec.push({ id, n, src: "wd", total: mineAll[id] || n }));
+  Object.entries(mineAll).filter(([id]) => allowed.has(id) && !mine[id])
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([id, n]) => rec.push({ id, n, src: "all" }));
+  // 本人完全沒有紀錄時，才參考其他人這個星期幾常排的
+  if (!rec.length) {
+    Object.entries(all).filter(([id, n]) => allowed.has(id) && n >= 2)
+      .sort((a, b) => b[1] - a[1]).slice(0, 4)
+      .forEach(([id, n]) => rec.push({ id, n, src: "others", top: topWho(id) }));
   }
   // 智能排序分數：本人同星期幾 > 本人全部 > 全部人同星期幾
   const score = id => (mine[id] || 0) * 1000 + (mineAll[id] || 0) * 20 + (all[id] || 0);
@@ -1247,13 +1254,15 @@ function renderDay() {
   const W = `週${WEEK[wd]}`;
   $("#dpCurrent").innerHTML = ids.map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
 
-  const recF = rec.filter(r => !ids.includes(r.id) && shiftMap[r.id]);
+  const recF = rec.filter(r => !ids.includes(r.id) && shiftMap[r.id]).slice(0, 8);
   $("#dpRecWrap").classList.toggle("hidden", !recF.length);
-  $("#dpRecNote").textContent = `依過去 3 個月${W}的排班`;
+  $("#dpRecNote").textContent = recF[0]?.src === "others" ? `他還沒有紀錄，參考其他人${W}的排班` : `依他過去 6 個月的排班`;
   $("#dpRec").innerHTML = recF.map(r => {
     const s = shiftMap[r.id];
-    const why = r.src === "mine" ? `他${W}排過 ${r.n} 次` : (r.top ? `${W}常由 ${esc(r.top.name)} 負責（${r.top.n} 次）` : `${W}常見班別`);
-    return `<button class="rec" data-add="${r.id}">
+    const why = r.src === "wd" ? `他${W}排過 ${r.n} 次・共 ${r.total} 次`
+      : r.src === "all" ? `他共排過 ${r.n} 次（${W}沒排過）`
+      : (r.top ? `${W}常由 ${esc(r.top.name)} 負責（${r.top.n} 次）` : `${W}常見班別`);
+    return `<button class="rec ${r.src === "wd" ? "top" : ""}" data-add="${r.id}">
       <span class="dot" style="background:${esc(s.color)}"></span>
       <span class="rec-main"><span class="rec-name">${esc(s.name)}</span><span class="rec-why">${why}${s.start && s.end ? ` · ${s.start}–${s.end}` : ""}</span></span>
       <span class="rec-add">＋</span></button>`;
