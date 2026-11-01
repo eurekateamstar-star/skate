@@ -60,11 +60,17 @@ service cloud.firestore {
         && math.abs(d.lat - get(locPath(lid)).data.lat) <= get(locPath(lid)).data.dLat
         && math.abs(d.lng - get(locPath(lid)).data.lng) <= get(locPath(lid)).data.dLng;
     }
+    // 下班打卡且班別有設定下班地點 → 用下班地點；否則用上班地點
+    function needLoc(d) {
+      return (d.type == 'out' && get(shiftPath(d.shiftId)).data.get('outLocationId', '') != '')
+        ? get(shiftPath(d.shiftId)).data.outLocationId
+        : get(shiftPath(d.shiftId)).data.get('locationId', '');
+    }
     function locationOk(d) {
       return !('shiftId' in d) || d.shiftId == null || d.shiftId == ''
         || !exists(shiftPath(d.shiftId))
-        || get(shiftPath(d.shiftId)).data.get('locationId', '') == ''
-        || inRange(d, get(shiftPath(d.shiftId)).data.locationId);
+        || needLoc(d) == ''
+        || inRange(d, needLoc(d));
     }
 
     // 打卡：只能用自己的身分、伺服器時間、在打卡範圍內新增；不能修改或刪除

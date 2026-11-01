@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=24";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=25";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -509,6 +509,9 @@ function newMap(L, el) {
   return m;
 }
 
+// 班別的上班 / 下班打卡地點（沒設定下班地點 = 和上班相同）
+const locFor = (s, type) => locMap[(type === "out" && s?.outLocationId) ? s.outLocationId : s?.locationId];
+
 // ---- 今日班別打卡 ----
 let clockShifts = [], extraShifts = [], todayRecs = [];
 let cMap = null, cLayer = null, mapFitted = false;
@@ -544,25 +547,30 @@ function renderPunchCards() {
       return `<div class="card punch-card leave"><div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
         <div class="pc-title"><b>${esc(s.name)}</b><span>休假，不需打卡</span></div></div></div>`;
     }
-    const loc = locMap[s.locationId];
-    const chk = rangeCheck(loc);
+    const inLoc = locFor(s, "in"), outLoc = locFor(s, "out");
+    const two = inLoc?.id !== outLoc?.id;
+    const chkIn = rangeCheck(inLoc), chkOut = rangeCheck(outLoc);
     const recs = todayRecs.filter(r => r.shiftId === id);
     const inR = recs.filter(r => r.type === "in")[0];
     const outR = recs.filter(r => r.type === "out").at(-1);
-    const btn = (type, r, label) => `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}" ${chk.ok ? "" : "disabled"}>
+    const chkOf = { in: chkIn, out: chkOut };
+    const btn = (type, r, label) => `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}" ${chkOf[type].ok ? "" : "disabled"}>
       <span>${label}</span>${r ? `<small>已打 ${hm(r.t)}</small>` : ""}</button>`;
+    const locLine = (chk, prefix) => `<div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(chk.text)}</div>`;
+    // 上下班地點不同：先打上班顯示上班地點；打完上班改顯示下班地點
+    const locHtml = !two ? locLine(chkIn) : inR ? locLine(chkOut, "下班") + `<div class="pc-loc done"><b>上班</b>${esc(inLoc?.name || "不限地點")}・已打卡</div>` : locLine(chkIn, "上班") + locLine(chkOut, "下班");
     return `<div class="card punch-card">
       <div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
         <div class="pc-title"><b>${esc(s.name)}</b>${time ? `<span>${time}</span>` : ""}</div>
         ${inR && outR ? `<span class="badge green">已完成</span>` : inR ? `<span class="badge orange">上班中</span>` : ""}</div>
-      <div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${esc(chk.text)}</div>
+      ${locHtml}
       <div class="pc-btns">${btn("in", inR, "上班")}${btn("out", outR, "下班")}</div>
     </div>`;
   }).join("");
 }
 
 async function updateClockMap() {
-  const locs = [...new Map(punchIds().map(id => locMap[shiftMap[id]?.locationId]).filter(Boolean).map(l => [l.id, l])).values()];
+  const locs = [...new Map(punchIds().flatMap(id => [locFor(shiftMap[id], "in"), locFor(shiftMap[id], "out")]).filter(Boolean).map(l => [l.id, l])).values()];
   if (!locs.length && !geo.pos) { $("#mapCard").classList.add("hidden"); return; }
   $("#mapCard").classList.remove("hidden");
   let L;
@@ -595,7 +603,7 @@ $("#shiftPunch").onclick = e => {
 
 async function punch(type, sid) {
   const s = shiftMap[sid];
-  const loc = locMap[s?.locationId];
+  const loc = locFor(s, type);
   const chk = rangeCheck(loc);
   if (!chk.ok) return appAlert("無法打卡", chk.text);
   const done = todayRecs.some(r => r.shiftId === sid && r.type === type);
@@ -1075,7 +1083,8 @@ async function renderShiftList() {
       <td><input class="s-start" type="time" value="${esc(s.start || "")}"></td>
       <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
       <td>${shiftHours(s) || "—"}${s.breakStart && s.breakEnd ? `<div class="emp-no">休息 ${esc(s.breakStart)}~${esc(s.breakEnd)}</div>` : ""}</td>
-      <td><select class="s-loc">${locOpts(s.locationId || "")}</select></td>
+      <td><div class="loc-pair"><label><span>上班</span><select class="s-loc">${locOpts(s.locationId || "")}</select></label>
+        <label><span>下班</span><select class="s-oloc">${locOpts(s.outLocationId || "").replace("不限地點", "同上班地點")}</select></label></div></td>
       <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
       <td>
         <button class="btn small primary s-save">儲存</button>
@@ -1116,6 +1125,7 @@ $("#shiftList").onclick = async e => {
         start: $(".s-start", tr).value,
         end: $(".s-end", tr).value,
         locationId: $(".s-loc", tr).value || "",
+        outLocationId: $(".s-oloc", tr).value || "",
         color: $(".s-color", tr).value
       };
       if (!data.name) return toast("名稱不可空白");
@@ -1142,7 +1152,7 @@ const boxOf = (lat, radius) => {
 };
 
 function renderLocList() {
-  const used = id => shiftTypes.filter(s => s.locationId === id).length;
+  const used = id => shiftTypes.filter(s => s.locationId === id || s.outLocationId === id).length;
   $("#locList").innerHTML = locations.map(l => `
     <tr data-id="${l.id}">
       <td><input class="l-name" value="${esc(l.name)}" size="14"></td>
@@ -1244,10 +1254,12 @@ $("#locList").onclick = async e => {
       toast("已儲存");
       renderShiftList();
     } else if (e.target.classList.contains("l-del")) {
-      const n = shiftTypes.filter(s => s.locationId === l.id).length;
+      const n = shiftTypes.filter(s => s.locationId === l.id || s.outLocationId === l.id).length;
       if (!(await appConfirm("刪除打卡地點", `刪除「${l.name}」？${n ? `目前有 ${n} 個班別使用，刪除後這些班別將不限地點。` : ""}`, { okText: "刪除", danger: true }))) return;
       const b = writeBatch(db);
-      shiftTypes.filter(s => s.locationId === l.id).forEach(s => b.update(doc(db, "shiftTypes", s.id), { locationId: "" }));
+      shiftTypes.filter(s => s.locationId === l.id || s.outLocationId === l.id).forEach(s => b.update(doc(db, "shiftTypes", s.id), {
+        ...(s.locationId === l.id ? { locationId: "" } : {}), ...(s.outLocationId === l.id ? { outLocationId: "" } : {})
+      }));
       b.delete(doc(db, "locations", l.id));
       await b.commit();
       toast("已刪除");

@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=24">
+  <link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 
@@ -304,7 +304,7 @@
             <button type="button" class="btn" id="locHere">使用目前位置</button>
             <button class="btn primary">新增地點</button>
           </form>
-          <p class="hint">在地圖上點一下就能選位置。員工必須在範圍內才能打卡；在下方班別列表為每個班別指定打卡地點，沒指定的班別不限地點。</p>
+          <p class="hint">在地圖上點一下就能選位置。員工必須在範圍內才能打卡；在下方班別列表為每個班別指定「上班」和「下班」打卡地點（例如接送車：上班在溜冰場、下班在學校）；下班選「同上班地點」就是同一個地方，都沒指定則不限地點。</p>
           <div class="loc-list-wrap">
             <table class="tbl">
               <thead><tr><th>地點</th><th>座標</th><th>範圍（公尺）</th><th></th></tr></thead>
@@ -472,6 +472,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=24"></script>
+<script type="module" src="app.js?v=25"></script>
 </body>
 </html>
