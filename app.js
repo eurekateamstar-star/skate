@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=27";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=28";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -483,7 +483,7 @@ function rangeCheck(loc) {
   if (geo.err) return { ok: false, cls: "far", text: geo.err };
   if (!geo.pos) return { ok: false, cls: "wait", text: `${loc.name}・定位中…` };
   const d = Math.round(distM(geo.pos, loc));
-  const ok = d <= (loc.radius || 50) + Math.min(geo.acc || 0, 20);
+  const ok = d <= (loc.radius || 50) + Math.min(geo.acc || 0, 30);
   return { ok, cls: ok ? "ok" : "far", d, text: ok ? `${loc.name}・距離 ${d} 公尺，可以打卡` : `${loc.name}・距離 ${d} 公尺，超出範圍（打卡需填原因）` };
 }
 
@@ -650,7 +650,11 @@ async function punch(type, sid) {
     await loadToday();
   } catch (err) {
     console.error(err);
-    toast("打卡失敗：" + errMsg(err));
+    if (err.code === "permission-denied") {
+      appAlert("打卡失敗：權限不足", reason
+        ? "系統還不接受「範圍外打卡」。請管理者到 Firebase → Firestore → 規則，貼上最新版 firestore.rules 並按「發布」。"
+        : "打卡位置不在範圍內，或 Firebase 規則還沒更新為最新版。請管理者確認規則已發布。");
+    } else toast("打卡失敗：" + errMsg(err));
   } finally {
     renderPunchCards();
   }

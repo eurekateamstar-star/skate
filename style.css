@@ -235,8 +235,8 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .gps-line.bad .gps-dot{background:var(--red)}
 @keyframes pulse{50%{opacity:.3}}
 .card.map-card{padding:0;overflow:hidden}
-.mini-map{height:220px;width:100%;background:var(--fill)}
-.loc-map{height:300px;border-radius:14px;overflow:hidden;background:var(--fill)}
+.mini-map{height:220px;width:100%;background:var(--fill);position:relative;z-index:0}
+.loc-map{height:300px;border-radius:14px;overflow:hidden;background:var(--fill);position:relative;z-index:0}
 .map-tip{background:rgba(255,255,255,.95);border:0;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);font:600 12px var(--font);color:var(--text);padding:3px 8px}
 .map-tip::before{display:none}
 .leaflet-container{font-family:var(--font)}
@@ -330,7 +330,7 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .td-chips{display:flex;flex-wrap:wrap;gap:4px;flex:1}
 
 /* ---------- 視窗（班表設定） ---------- */
-.modal-mask{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.25);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;opacity:0;transition:opacity .2s}
+.modal-mask{position:fixed;inset:0;z-index:2500;background:rgba(0,0,0,.25);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;opacity:0;transition:opacity .2s}
 .modal-mask.open{opacity:1}
 .modal{background:var(--bg);border-radius:22px;width:min(640px,100%);max-height:min(860px,92vh);display:flex;flex-direction:column;box-shadow:var(--shadow-lg);transform:scale(.97) translateY(8px);transition:transform .25s cubic-bezier(.2,.8,.2,1);overflow:hidden}
 .modal-mask.open .modal{transform:none}
@@ -384,7 +384,7 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .dlg-input{width:100%;margin-top:14px;background:#fff;text-align:center;font-size:16px}
 
 /* ---------- App 對話框 ---------- */
-.dlg-mask{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;padding:32px;opacity:0;transition:opacity .18s}
+.dlg-mask{position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;padding:32px;opacity:0;transition:opacity .18s}
 .dlg-mask.open{opacity:1}
 .dlg{width:min(300px,100%);background:rgba(250,250,252,.94);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border-radius:16px;overflow:hidden;box-shadow:var(--shadow-lg);transform:scale(1.08);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
 .dlg-mask.open .dlg{transform:none}
