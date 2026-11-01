@@ -7,7 +7,7 @@
   <title>打卡系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
 
@@ -127,18 +127,38 @@
       <!-- 我的班表 -->
       <section id="view-mySchedule" class="view hidden">
         <div class="view-head">
-          <h2>我的班表</h2>
-          <input type="month" id="mySchMonth">
+          <div class="vh-title">
+            <h2>我的班表</h2>
+            <div class="vh-sub" id="mySchSub"></div>
+          </div>
+          <div class="vh-actions">
+            <div class="seg hidden" id="mySchMode">
+              <button data-v="mine" class="on">我的</button>
+              <button data-v="all">全部人</button>
+            </div>
+            <input type="month" id="mySchMonth">
+          </div>
         </div>
-        <div class="card"><div class="cal" id="myCal"></div></div>
+        <div class="card" id="myCalWrap"><div class="cal" id="myCal"></div></div>
+        <div id="teamWrap" class="hidden">
+          <div class="sched-wrap desk-only"><table class="sched readonly" id="teamTable"></table></div>
+          <div class="mob-only" id="teamDays"></div>
+        </div>
       </section>
 
       <!-- 排班作業 -->
       <section id="view-scheduling" class="view hidden">
         <div class="view-head">
-          <h2 id="schTitle">排班作業</h2>
-          <input type="month" id="schMonth">
-          <button class="btn small" id="copyPrevBtn">複製上月</button>
+          <div class="vh-title">
+            <h2 id="schTitle">排班作業</h2>
+            <div class="vh-sub" id="schSub"></div>
+          </div>
+          <div class="vh-actions">
+            <input type="month" id="schMonth">
+            <button class="btn" id="rosterEditBtn">班表設定</button>
+            <button class="btn" id="copyPrevBtn">複製上月</button>
+            <button class="btn primary" id="publishBtn">發布</button>
+          </div>
         </div>
 
         <div class="card sch-tools">
@@ -288,6 +308,50 @@
       <a data-view="shifts"><svg class="ic"><use href="#i-tag"/></svg>班別設定</a>
     </div>
   </div>
+  <!-- 班表設定 -->
+  <div class="modal-mask hidden" id="rosterModal">
+    <div class="modal">
+      <div class="modal-head">
+        <button class="btn link" data-close>取消</button>
+        <h3>編輯班表</h3>
+        <button class="btn link strong" id="rosterSave">儲存</button>
+      </div>
+      <div class="modal-body">
+        <div class="group">
+          <div class="field">
+            <label>班表名稱</label>
+            <input id="rName" placeholder="例：2026/12月班表">
+          </div>
+          <div class="field">
+            <label>班表檢視權限</label>
+            <div class="seg wide" id="rVis">
+              <button data-v="self">僅可查看自己</button>
+              <button data-v="all">可查看全部人</button>
+            </div>
+            <p class="hint">選「全部人」並按「發布」後，員工可在「我的班表」看到整個團隊的班表。</p>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="field-head">
+            <label>選擇班別 <span class="count" id="rShiftCount"></span></label>
+            <span><button class="btn link" id="rShiftAll">全選</button><button class="btn link" id="rShiftNone">清除</button></span>
+          </div>
+          <input class="filter" id="rShiftFilter" placeholder="搜尋班別">
+          <div class="check-list" id="rShifts"></div>
+        </div>
+
+        <div class="group">
+          <div class="field-head">
+            <label>選擇排班人員 <span class="count" id="rEmpCount"></span></label>
+            <span><button class="btn link" id="rEmpAll">全選</button><button class="btn link" id="rEmpNone">清除</button></span>
+          </div>
+          <input class="filter" id="rEmpFilter" placeholder="搜尋人員">
+          <div class="check-list" id="rEmps"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -305,6 +369,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=12"></script>
+<script type="module" src="app.js?v=13"></script>
 </body>
 </html>

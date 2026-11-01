@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=12";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=13";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -493,10 +493,28 @@ async function loadRecords() {
 }
 
 /* ================= 我的班表 ================= */
+let mySchMode = "mine";
+const VIS_LABEL = { self: "僅可查看自己", all: "可查看全部人" };
+
 async function loadMySchedule() {
   const month = $("#mySchMonth").value;
-  const snap = await getDocs(query(collection(db, "schedules"),
-    where("empId", "==", me.id), where("month", "==", month)));
+  const [snap, rSnap] = await Promise.all([
+    getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month))),
+    getDoc(doc(db, "rosters", month))
+  ]);
+  const r = rSnap.exists() ? rSnap.data() : {};
+  let pub = null;
+  if (r.visibility === "all") {
+    const p = await getDoc(doc(db, "rosterPublic", month)).catch(() => null);
+    if (p?.exists()) pub = p.data();
+  }
+  $("#mySchMode").classList.toggle("hidden", !pub);
+  if (!pub) mySchMode = "mine";
+  $$("#mySchMode button").forEach(b => b.classList.toggle("on", b.dataset.v === mySchMode));
+  const [y, m] = month.split("-");
+  $("#mySchSub").textContent = (r.name || `${y}/${+m}月班表`) + (pub ? " · 已發布全部人班表" : "");
+
+  // 我的月曆
   const sch = {};
   snap.forEach(d => sch[d.data().date] = d.data().shiftIds || []);
   const days = daysOfMonth(month);
@@ -505,13 +523,50 @@ async function loadMySchedule() {
   html += "<div></div>".repeat(days[0].getDay());
   for (const d of days) {
     const ds = ymd(d);
-    html += `<div class="day ${ds === today ? "today" : ""}">
+    const wk = d.getDay() === 0 || d.getDay() === 6;
+    html += `<div class="day ${ds === today ? "today" : ""} ${wk ? "wkend" : ""}">
       <div class="d">${d.getDate()}</div>
       ${(sch[ds] || []).map(id => chipHtml(id)).join("")}
     </div>`;
   }
   $("#myCal").innerHTML = html;
+
+  $("#myCalWrap").classList.toggle("hidden", mySchMode !== "mine");
+  $("#teamWrap").classList.toggle("hidden", mySchMode !== "all");
+  if (mySchMode === "all" && pub) renderTeam(month, pub);
 }
+
+function renderTeam(month, pub) {
+  const days = daysOfMonth(month);
+  const today = ymd(new Date());
+  const wk = d => (d.getDay() === 0 || d.getDay() === 6) ? "wkend" : "";
+  const cellIds = (eid, ds) => (pub.grid?.[eid]?.[ds]) || [];
+  // 電腦：表格
+  let html = `<thead><tr><th class="name">姓名 / 員編</th>${days.map(d =>
+    `<th class="${wk(d)}"${ymd(d) === today ? ' style="color:var(--primary)"' : ""}>${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）</th>`).join("")}</tr></thead><tbody>`;
+  for (const u of pub.emps || []) {
+    html += `<tr class="${u.id === me.id ? "me" : ""}"><td class="name">${esc(u.name)}<div class="emp-no">${esc(u.empNo || "")}</div></td>`;
+    for (const d of days) html += `<td class="${wk(d)}">${cellIds(u.id, ymd(d)).map(id => chipHtml(id)).join("")}</td>`;
+    html += "</tr>";
+  }
+  $("#teamTable").innerHTML = html + "</tbody>";
+  // 手機：每天誰上班
+  $("#teamDays").innerHTML = days.map(d => {
+    const ds = ymd(d);
+    const rows = (pub.emps || []).map(u => ({ u, ids: cellIds(u.id, ds) })).filter(x => x.ids.length);
+    return `<div class="team-day ${wk(d)} ${ds === today ? "today" : ""}">
+      <div class="td-head"><b>${d.getMonth() + 1}/${d.getDate()}</b><span>週${WEEK[d.getDay()]}</span><span class="td-n">${rows.length ? rows.length + " 人" : "無排班"}</span></div>
+      ${rows.map(x => `<div class="td-row ${x.u.id === me.id ? "me" : ""}"><span class="td-name">${esc(x.u.name)}</span><span class="td-chips">${x.ids.map(id => chipHtml(id)).join("")}</span></div>`).join("")}
+    </div>`;
+  }).join("");
+}
+
+$("#mySchMode").onclick = e => {
+  const b = e.target.closest("button[data-v]");
+  if (!b) return;
+  mySchMode = b.dataset.v;
+  loadMySchedule();
+};
 
 /* ================= 員工管理（管理者） ================= */
 async function loadEmployees() {
@@ -822,22 +877,43 @@ $("#leaveDefaultBtn").onclick = async () => {
 /* ================= 排班作業（管理者） ================= */
 let selShift = null;
 let schedMap = {}; // `${empId}_${date}` -> shiftIds
+let roster = {};   // 當月班表設定
+
+const tsMs = t => t?.toMillis ? t.toMillis() : (t instanceof Date ? t.getTime() : 0);
+const rosterShifts = () => roster.shiftIds?.length ? shiftTypes.filter(s => roster.shiftIds.includes(s.id)) : shiftTypes;
+const rosterEmps = () => roster.empIds?.length ? activeEmployees().filter(u => roster.empIds.includes(u.id)) : activeEmployees();
+
+function renderSchSub() {
+  const month = $("#schMonth").value;
+  const [y, m] = month.split("-");
+  const last = new Date(+y, +m, 0).getDate();
+  const pub = tsMs(roster.publishedAt);
+  const state = !pub ? `<span class="badge gray">尚未發布</span>`
+    : tsMs(roster.editedAt) > pub ? `<span class="badge orange">有未發布的變更</span>`
+    : `<span class="badge green">已發布</span>`;
+  $("#schTitle").textContent = roster.name;
+  $("#schSub").innerHTML = `${month}-01 ~ ${month}-${last} · ${VIS_LABEL[roster.visibility] || VIS_LABEL.self} · ${rosterEmps().length} 位人員 · ${rosterShifts().length} 個班別 ${state}`;
+}
 
 async function loadScheduling() {
   const month = $("#schMonth").value;
   await Promise.all([loadEmployees(), loadShiftTypes()]);
-  const snap = await getDocs(query(collection(db, "schedules"), where("month", "==", month)));
+  const [snap, rSnap] = await Promise.all([
+    getDocs(query(collection(db, "schedules"), where("month", "==", month))),
+    getDoc(doc(db, "rosters", month))
+  ]);
   schedMap = {};
   snap.forEach(d => schedMap[d.id] = d.data().shiftIds || []);
 
   const [y, m] = month.split("-");
-  $("#schTitle").textContent = `${y}/${+m}月班表`;
-  if (selShift && !shiftMap[selShift]) selShift = null;
+  roster = { name: `${y}/${+m}月班表`, shiftIds: [], empIds: [], visibility: "self", ...(rSnap.exists() ? rSnap.data() : {}) };
+  if (selShift && !rosterShifts().some(s => s.id === selShift)) selShift = null;
+  renderSchSub();
 
   // 下拉選單（手機、電腦共用）
   const opt = s => `<option value="${s.id}">${esc(s.name)}${s.start && s.end ? `（${s.start}-${s.end}）` : ""}</option>`;
-  const shifts = shiftTypes.filter(s => (s.cat || "shift") === "shift");
-  const leaves = shiftTypes.filter(s => s.cat === "leave");
+  const shifts = rosterShifts().filter(s => (s.cat || "shift") === "shift");
+  const leaves = rosterShifts().filter(s => s.cat === "leave");
   $("#schPick").innerHTML = `<option value="">— 請選擇班別 —</option>` +
     (shifts.length ? `<optgroup label="班別">${shifts.map(opt).join("")}</optgroup>` : "") +
     (leaves.length ? `<optgroup label="休假">${leaves.map(opt).join("")}</optgroup>` : "");
@@ -850,7 +926,7 @@ async function loadScheduling() {
 
 function renderPalette() {
   const f = ($("#schFilter").value || "").trim().toLowerCase();
-  const pal = cat => shiftTypes
+  const pal = cat => rosterShifts()
     .filter(s => (s.cat || "shift") === cat && (!f || s.name.toLowerCase().includes(f) || (s.code || "").toLowerCase().includes(f)))
     .map(s => `<span class="chip ${selShift === s.id ? "sel" : ""}" style="background:${esc(s.color)}" data-pick="${s.id}" title="${esc(shiftTip(s))}">${esc(s.name)}</span>`)
     .join("") || `<span class="hint" style="margin:0">${f ? "找不到符合的班別" : "（請先到「班別設定」新增）"}</span>`;
@@ -875,7 +951,7 @@ $("#view-scheduling").addEventListener("click", e => {
 // ---- 電腦版：表格 ----
 function renderSchedTable(month) {
   const days = daysOfMonth(month);
-  const list = activeEmployees();
+  const list = rosterEmps();
   const today = ymd(new Date());
   const wk = d => (d.getDay() === 0 || d.getDay() === 6) ? "wkend" : "";
   let html = `<thead><tr><th class="name">姓名 / 員編</th>${days.map(d =>
@@ -896,7 +972,7 @@ $("#schedTable").onclick = e => onCellClick(e, e.target.closest("td.cell"));
 
 // ---- 手機版：選一位員工，列出整月每天 ----
 function renderSchedMobile(month) {
-  const list = activeEmployees();
+  const list = rosterEmps();
   const sel = $("#schEmp");
   const cur = sel.value;
   sel.innerHTML = list.map(u => {
@@ -934,6 +1010,115 @@ $("#schPrev").onclick = () => stepEmp(-1);
 $("#schNext").onclick = () => stepEmp(1);
 $("#schDays").onclick = e => onCellClick(e, e.target.closest(".day-row"));
 
+// ---- 班表設定視窗 ----
+let rDraft = null;
+function openRoster() {
+  rDraft = {
+    name: roster.name,
+    visibility: roster.visibility || "self",
+    shiftIds: new Set(roster.shiftIds?.length ? roster.shiftIds : shiftTypes.map(s => s.id)),
+    empIds: new Set(roster.empIds?.length ? roster.empIds : activeEmployees().map(u => u.id))
+  };
+  $("#rName").value = rDraft.name;
+  $("#rShiftFilter").value = ""; $("#rEmpFilter").value = "";
+  renderRosterForm();
+  $("#rosterModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#rosterModal").classList.add("open"));
+}
+function closeRoster() {
+  $("#rosterModal").classList.remove("open");
+  setTimeout(() => $("#rosterModal").classList.add("hidden"), 200);
+}
+function renderRosterForm() {
+  $$("#rVis button").forEach(b => b.classList.toggle("on", b.dataset.v === rDraft.visibility));
+  const fs = $("#rShiftFilter").value.trim().toLowerCase();
+  $("#rShifts").innerHTML = shiftTypes.filter(s => !fs || s.name.toLowerCase().includes(fs) || (s.code || "").toLowerCase().includes(fs)).map(s => `
+    <label class="check-item"><input type="checkbox" data-sid="${s.id}" ${rDraft.shiftIds.has(s.id) ? "checked" : ""}>
+      <span class="dot" style="background:${esc(s.color)}"></span><span class="ci-name">${esc(s.name)}</span>
+      <span class="ci-sub">${s.start && s.end ? `${s.start}–${s.end}` : (s.cat === "leave" ? "休假" : "")}</span></label>`).join("")
+    || `<p class="empty">找不到班別</p>`;
+  const fe = $("#rEmpFilter").value.trim().toLowerCase();
+  $("#rEmps").innerHTML = activeEmployees().filter(u => !fe || (u.name || "").toLowerCase().includes(fe) || (u.empNo || "").toLowerCase().includes(fe)).map(u => `
+    <label class="check-item"><input type="checkbox" data-eid="${u.id}" ${rDraft.empIds.has(u.id) ? "checked" : ""}>
+      <span class="ci-name">${esc(u.name)}</span><span class="ci-sub">${esc(u.empNo || "")}</span></label>`).join("")
+    || `<p class="empty">找不到人員</p>`;
+  $("#rShiftCount").textContent = `${rDraft.shiftIds.size} / ${shiftTypes.length}`;
+  $("#rEmpCount").textContent = `${rDraft.empIds.size} / ${activeEmployees().length}`;
+}
+$("#rosterEditBtn").onclick = openRoster;
+$("#rosterModal").onclick = e => { if (e.target.id === "rosterModal" || e.target.closest("[data-close]")) closeRoster(); };
+$("#rVis").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { rDraft.visibility = b.dataset.v; renderRosterForm(); } };
+$("#rShiftFilter").oninput = renderRosterForm;
+$("#rEmpFilter").oninput = renderRosterForm;
+$("#rShifts").onchange = e => { const id = e.target.dataset.sid; e.target.checked ? rDraft.shiftIds.add(id) : rDraft.shiftIds.delete(id); renderRosterForm(); };
+$("#rEmps").onchange = e => { const id = e.target.dataset.eid; e.target.checked ? rDraft.empIds.add(id) : rDraft.empIds.delete(id); renderRosterForm(); };
+$("#rShiftAll").onclick = () => { shiftTypes.forEach(s => rDraft.shiftIds.add(s.id)); renderRosterForm(); };
+$("#rShiftNone").onclick = () => { rDraft.shiftIds.clear(); renderRosterForm(); };
+$("#rEmpAll").onclick = () => { activeEmployees().forEach(u => rDraft.empIds.add(u.id)); renderRosterForm(); };
+$("#rEmpNone").onclick = () => { rDraft.empIds.clear(); renderRosterForm(); };
+
+$("#rosterSave").onclick = async () => {
+  if (!rDraft.shiftIds.size) return toast("請至少選擇一個班別");
+  if (!rDraft.empIds.size) return toast("請至少選擇一位排班人員");
+  const month = $("#schMonth").value;
+  // 全選時存空陣列 = 全部（之後新增的班別 / 員工也會自動包含）
+  const allS = rDraft.shiftIds.size === shiftTypes.length;
+  const allE = activeEmployees().every(u => rDraft.empIds.has(u.id));
+  const data = {
+    name: $("#rName").value.trim() || roster.name,
+    visibility: rDraft.visibility,
+    shiftIds: allS ? [] : [...rDraft.shiftIds],
+    empIds: allE ? [] : [...rDraft.empIds],
+    editedAt: serverTimestamp()
+  };
+  try {
+    await setDoc(doc(db, "rosters", month), data, { merge: true });
+    toast("班表設定已儲存");
+    closeRoster();
+    loadScheduling();
+  } catch (err) { toast("儲存失敗：" + errMsg(err)); }
+};
+
+// ---- 發布 ----
+async function markEdited() {
+  roster.editedAt = new Date();
+  renderSchSub();
+  try { await setDoc(doc(db, "rosters", $("#schMonth").value), { editedAt: serverTimestamp() }, { merge: true }); } catch {}
+}
+$("#publishBtn").onclick = async () => {
+  const month = $("#schMonth").value;
+  const emps = rosterEmps();
+  const msg = roster.visibility === "all"
+    ? `發布「${roster.name}」？\n發布後 ${emps.length} 位人員都可以看到全部人的班表。`
+    : `發布「${roster.name}」？\n目前權限為「僅可查看自己」，員工只會看到自己的班。`;
+  if (!confirm(msg)) return;
+  $("#publishBtn").disabled = true;
+  try {
+    if (roster.visibility === "all") {
+      const grid = {};
+      emps.forEach(u => {
+        const g = {};
+        Object.entries(schedMap).forEach(([k, ids]) => { if (k.startsWith(u.id + "_") && ids.length) g[k.slice(u.id.length + 1)] = ids; });
+        grid[u.id] = g;
+      });
+      await setDoc(doc(db, "rosterPublic", month), {
+        name: roster.name, month, grid, publishedAt: serverTimestamp(),
+        emps: emps.map(u => ({ id: u.id, name: u.name || "", empNo: u.empNo || "" }))
+      });
+    } else {
+      await deleteDoc(doc(db, "rosterPublic", month)).catch(() => {});
+    }
+    await setDoc(doc(db, "rosters", month), {
+      name: roster.name, visibility: roster.visibility || "self",
+      shiftIds: roster.shiftIds || [], empIds: roster.empIds || [], publishedAt: serverTimestamp()
+    }, { merge: true });
+    roster.publishedAt = new Date(Date.now() + 1000);
+    renderSchSub();
+    toast("班表已發布");
+  } catch (err) { toast("發布失敗：" + errMsg(err) + "（請確認 firestore.rules 已更新）"); }
+  finally { $("#publishBtn").disabled = false; }
+};
+
 // ---- 共用：點格子加入 / 點 × 移除 ----
 async function onCellClick(e, cell) {
   if (!cell) return;
@@ -960,6 +1145,7 @@ async function saveCell(key, ids, cell) {
       await deleteDoc(doc(db, "schedules", key));
     }
     schedMap[key] = ids;
+    markEdited();
     if (cell?.classList.contains("day-row")) cell.querySelector(".dr-chips").innerHTML = dayChips(key);
     else if (cell) cell.innerHTML = ids.map(id => chipHtml(id, true)).join("");
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
@@ -976,7 +1162,7 @@ $("#copyPrevBtn").onclick = async () => {
     tpl[`${s.empId}_${wd}`] = s.shiftIds;
   });
   let batch = writeBatch(db), n = 0, total = 0;
-  for (const u of activeEmployees()) {
+  for (const u of rosterEmps()) {
     for (const d of daysOfMonth(month)) {
       const ids = tpl[`${u.id}_${d.getDay()}`];
       if (!ids?.length) continue;
@@ -989,6 +1175,7 @@ $("#copyPrevBtn").onclick = async () => {
   if (!total) return toast("上月沒有班表可複製");
   if (n) await batch.commit();
   toast(`已複製 ${total} 筆`);
+  markEdited();
   loadScheduling();
 };
 

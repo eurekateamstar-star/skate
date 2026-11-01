@@ -33,6 +33,18 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 班表設定（名稱、班別、人員、檢視權限）
+    match /rosters/{month} {
+      allow read: if bound();
+      allow write: if isAdmin();
+    }
+
+    // 已發布的全部人班表（檢視權限為「全部人」時才會產生）
+    match /rosterPublic/{month} {
+      allow read: if bound();
+      allow write: if isAdmin();
+    }
+
     // 打卡：只能用自己的身分、伺服器時間新增；不能修改或刪除
     match /attendance/{id} {
       allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
