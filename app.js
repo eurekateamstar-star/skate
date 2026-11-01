@@ -6,7 +6,7 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=3";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=4";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -115,7 +115,7 @@ async function callWorker(path, data = {}) {
     try { retried = sessionStorage.getItem("lineRetry") === "1"; } catch {}
     if (liff.isInClient() || retried) {
       try { sessionStorage.removeItem("lineRetry"); } catch {}
-      throw new Error("LINE 身分驗證失敗。請確認 Cloudflare Worker 的變數 LINE_CHANNEL_ID 是否正確（應為 LINE Login Channel ID），設定後要重新部署。");
+      throw new Error("LINE 身分驗證失敗。" + tokenInfo(idToken) + (d.detail ? "｜" + d.detail : "｜（Worker 尚未更新為新版，看不到 LINE 的詳細原因）"));
     }
     try { sessionStorage.setItem("lineRetry", "1"); } catch {}
     liff.logout();
@@ -125,6 +125,15 @@ async function callWorker(path, data = {}) {
   try { sessionStorage.removeItem("lineRetry"); } catch {}
   if (d.error === "server_error") throw new Error("Worker 錯誤：" + (d.message || "") + "（請檢查 Worker 變數設定）");
   return d;
+}
+
+// 解析 LINE idToken 內容，方便排錯（只讀取，不驗證）
+function tokenInfo(t) {
+  try {
+    const p = JSON.parse(decodeURIComponent(escape(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")))));
+    const left = Math.round((p.exp * 1000 - Date.now()) / 60000);
+    return `token 的 Channel ID=${p.aud}，${left > 0 ? `剩 ${left} 分鐘到期` : `已過期 ${-left} 分鐘`}`;
+  } catch { return "token 無法解析"; }
 }
 
 function withTimeout(p, ms, msg) {

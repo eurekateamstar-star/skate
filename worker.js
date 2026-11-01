@@ -29,7 +29,10 @@ export default {
     try {
       const body = await req.json().catch(() => ({}));
       const line = await verifyLine(body.idToken, env);
-      if (!line?.sub) return json({ error: "invalid_token" }, 401);
+      if (!line?.sub) return json({
+        error: "invalid_token",
+        detail: `LINE 回應：${line?.error || "未知"}；Worker 設定的 LINE_CHANNEL_ID=${env.LINE_CHANNEL_ID || "(未設定)"}`
+      }, 401);
 
       const uid = "line:" + line.sub;
       const fs = new Firestore(env);
@@ -79,13 +82,15 @@ export default {
 
 /* ---------- LINE ---------- */
 async function verifyLine(idToken, env) {
-  if (!idToken) return null;
+  if (!idToken) return { error: "沒有收到 idToken" };
   const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ id_token: idToken, client_id: env.LINE_CHANNEL_ID })
+    body: new URLSearchParams({ id_token: idToken, client_id: String(env.LINE_CHANNEL_ID || "").trim() })
   });
-  return r.ok ? r.json() : null;
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return { error: d.error_description || d.error || ("HTTP " + r.status) };
+  return d;
 }
 
 /* ---------- JWT（RS256） ---------- */
