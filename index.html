@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>打卡系統</title>
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 
@@ -216,7 +216,20 @@
 </div>
 
 <div id="toast"></div>
+<script>
+  // 看門狗：主程式若載入失敗或卡住，顯示原因與重新整理按鈕
+  window.__errs = [];
+  addEventListener("error", e => window.__errs.push((e.message || "") + " " + (e.filename || e.target?.src || "")), true);
+  setTimeout(() => {
+    var l = document.getElementById("authLoading"), m = document.getElementById("authMsg");
+    if (l && !l.classList.contains("hidden") && !document.getElementById("appView").offsetParent) {
+      l.classList.add("hidden");
+      m.innerHTML = "載入逾時。" + (window.__errs.length ? "錯誤：" + window.__errs.join("；").replace(/</g, "&lt;") : "可能是網路不穩或 LINE 快取舊版。") +
+        '<br><button class="btn primary" style="margin-top:10px" onclick="location.reload()">重新整理</button>';
+    }
+  }, 25000);
+</script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=6"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>

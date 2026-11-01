@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=6";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=7";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
