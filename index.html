@@ -15,7 +15,7 @@
   <title>打卡系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=15">
+  <link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
 
@@ -165,6 +165,8 @@
             <input type="month" id="schMonth">
             <button class="btn" id="rosterEditBtn">班表設定</button>
             <button class="btn" id="copyPrevBtn">複製上月</button>
+            <button class="btn" id="importXlsxBtn">匯入 Excel</button>
+            <input type="file" id="xlsxInput" accept=".xlsx,.xls" hidden>
             <button class="btn primary" id="publishBtn">發布</button>
           </div>
         </div>
@@ -414,6 +416,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=15"></script>
+<script type="module" src="app.js?v=16"></script>
 </body>
 </html>

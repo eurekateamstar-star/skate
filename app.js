@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=15";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=16";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1409,3 +1409,148 @@ $("#csvBtn").onclick = () => {
 
 /* ================= 啟動 ================= */
 boot();
+
+/* ================= 匯入舊班表 Excel（管理者） ================= */
+// 解析舊系統匯出的班表 Excel（每週一區塊：日期列 + 員工列）
+function parseRosterWorkbook(XLSX, wb) {
+  const pad = n => String(n).padStart(2, "0");
+  const toDate = v => {
+    if (v instanceof Date) return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+    const m = String(v || "").trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+    return m ? `${m[1]}-${pad(m[2])}-${pad(m[3])}` : null;
+  };
+  const out = { titles: {}, entries: [], shiftDefs: {} };
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: "" });
+    if (!rows.some(r => String(r[0]).trim() === "姓名/員編")) continue;   // 不是班表工作表
+    let title = String(rows[0]?.[0] || "").trim();
+    let colDate = {};
+    for (const r of rows) {
+      const first = String(r[0] || "").trim();
+      const dates = r.map(toDate);
+      if (!first && dates.some(Boolean)) {                              // 日期列
+        colDate = {};
+        dates.forEach((d, i) => { if (d && i > 0) colDate[i] = d; });
+        continue;
+      }
+      const em = first.match(/^(.+?)\s*[（(]([^()（）]+)[)）]\s*$/);       // 姓名(員編)
+      if (!em || first === "姓名/員編") continue;
+      for (const [i, date] of Object.entries(colDate)) {
+        const cell = String(r[i] || "").trim();
+        if (!cell) { out.entries.push({ name: em[1].trim(), empNo: em[2].trim(), date, items: [] }); continue; }
+        const items = cell.split(/,\s*|\n/).map(s => s.trim()).filter(Boolean).map(part => {
+          const m = part.match(/^(.*?)\s+(\d{1,2}:\d{2})\s*[-~–]\s*(\d{1,2}:\d{2})$/);
+          const it = m ? { name: m[1].trim(), start: m[2].padStart(5, "0"), end: m[3].padStart(5, "0") } : { name: part, start: "", end: "" };
+          out.shiftDefs[it.name] ??= { start: it.start, end: it.end };
+          return it;
+        });
+        out.entries.push({ name: em[1].trim(), empNo: em[2].trim(), date, items });
+      }
+      if (title) out.titles[Object.values(colDate)[0]?.slice(0, 7)] ??= title.replace(/\s+/g, "");
+    }
+  }
+  return out;
+}
+
+$("#importXlsxBtn").onclick = () => $("#xlsxInput").click();
+$("#xlsxInput").onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  toast("讀取檔案中…");
+  try {
+    const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
+    const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
+    await importRoster(parseRosterWorkbook(XLSX, wb));
+  } catch (err) {
+    console.error(err);
+    appAlert("匯入失敗", err.message || String(err));
+  }
+};
+
+async function importRoster(r) {
+  if (!r.entries.length) return appAlert("找不到班表", "這個檔案裡沒有可辨識的班表（需要有「姓名/員編」欄位與日期列）。");
+  await Promise.all([loadEmployees(), loadShiftTypes()]);
+  const norm = s => String(s || "").replace(/\s+/g, "").toLowerCase();
+  const byNo = {}, byName = {};
+  employees.forEach(u => { if (u.empNo) byNo[norm(u.empNo)] = u; byName[norm(u.name)] = u; });
+  const findEmp = e => byNo[norm(e.empNo)] || byName[norm(e.name)];
+  const missing = [...new Map(r.entries.filter(e => !findEmp(e)).map(e => [norm(e.empNo) + norm(e.name), { name: e.name, empNo: e.empNo }])).values()];
+  const shiftBy = {};
+  shiftTypes.forEach(s => shiftBy[norm(s.name)] = s);
+  const newShifts = Object.keys(r.shiftDefs).filter(n => !shiftBy[norm(n)]);
+  const dates = r.entries.map(e => e.date).sort();
+  const filled = r.entries.filter(e => e.items.length);
+  const matched = new Set(r.entries.filter(findEmp).map(e => findEmp(e).id)).size;
+
+  const msg = [
+    `期間：${dates[0]} ~ ${dates.at(-1)}`,
+    `員工：${matched} 位對應成功` + (missing.length ? `，${missing.length} 位系統中沒有（${missing.map(m => m.name).join("、")}）` : ""),
+    `排班：${filled.length} 天次、${filled.reduce((a, e) => a + e.items.length, 0)} 個班別`,
+    newShifts.length ? `將新增班別：${newShifts.join("、")}` : "班別全部對應成功",
+    "",
+    "檔案中這些日期已有的排班會被覆蓋。"
+  ].join("\n");
+  const choice = await appDialog({
+    title: "匯入班表",
+    message: msg,
+    buttons: missing.length
+      ? [{ text: "建立員工並匯入", value: "create", style: "primary" }, { text: "略過沒有的員工", value: "skip" }, { text: "取消", value: false }]
+      : [{ text: "取消", value: false }, { text: "匯入", value: "go", style: "primary" }]
+  });
+  if (!choice) return;
+
+  toast("匯入中…");
+  // 1. 建立缺少的員工（沒有 Email，之後在員工管理補上即可綁定）
+  if (choice === "create") {
+    const b = writeBatch(db);
+    for (const m of missing) {
+      const ref = doc(collection(db, "employees"));
+      const u = { name: m.name, empNo: m.empNo, email: "", role: "employee", active: true, lineUid: null, lineName: "", linePicture: "", bindFails: 0, createdAt: serverTimestamp() };
+      b.set(ref, u);
+      byNo[norm(m.empNo)] = { id: ref.id, ...u };
+    }
+    await b.commit();
+  }
+  // 2. 建立缺少的班別（含「假」的歸為休假）
+  if (newShifts.length) {
+    const b = writeBatch(db);
+    let fb = 0;
+    newShifts.forEach((name, i) => {
+      const leave = /假|休/.test(name);
+      const def = r.shiftDefs[name];
+      const ref = doc(collection(db, "shiftTypes"));
+      const sdoc = {
+        cat: leave ? "leave" : "shift", name, code: "",
+        start: leave ? "" : def.start, end: leave ? "" : def.end, breakStart: "", breakEnd: "",
+        color: leave ? LEAVE_COLOR : (COLOR_RULES.find(([re]) => re.test(name)) || [, FALLBACK_COLORS[fb++ % FALLBACK_COLORS.length]])[1],
+        order: Date.now() + i
+      };
+      b.set(ref, sdoc);
+      shiftBy[norm(name)] = { id: ref.id, ...sdoc };
+    });
+    await b.commit();
+  }
+  // 3. 寫入排班
+  let batch = writeBatch(db), n = 0, done = 0;
+  for (const e of r.entries) {
+    const u = findEmp(e);
+    if (!u) continue;
+    const key = `${u.id}_${e.date}`;
+    const ids = [...new Set(e.items.map(it => shiftBy[norm(it.name)]?.id).filter(Boolean))];
+    if (ids.length) batch.set(doc(db, "schedules", key), { empId: u.id, date: e.date, month: e.date.slice(0, 7), shiftIds: ids });
+    else batch.delete(doc(db, "schedules", key));
+    done++;
+    if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; toast(`匯入中… ${done} / ${r.entries.length}`); }
+  }
+  if (n) await batch.commit();
+  // 4. 班表名稱
+  for (const [month, title] of Object.entries(r.titles)) {
+    if (month && month !== "undefined") await setDoc(doc(db, "rosters", month), { name: title }, { merge: true });
+  }
+  history.month = null;   // 讓推薦重新讀取歷史
+  await loadShiftTypes();
+  await appAlert("匯入完成", `已匯入 ${done} 筆排班資料。` + (choice === "create" && missing.length ? `\n新建立的 ${missing.length} 位員工請到「員工管理」補上 Email，才能用 LINE 綁定。` : ""));
+  $("#schMonth").value = dates[0].slice(0, 7);
+  loadScheduling();
+}

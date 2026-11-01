@@ -304,7 +304,7 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
   .view-head{margin-bottom:16px;gap:10px;align-items:stretch}
   .view-head h2{font-size:28px}
   .vh-title,.view-head > h2{flex-basis:100%}
-  .vh-actions{width:100%;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .vh-actions{width:100%;display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
   .vh-actions > input[type=month]{grid-column:1/-1}
   .vh-actions > .seg{grid-column:1/-1}
   .vh-actions .btn{padding:0 6px}
