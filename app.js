@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=8";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=9";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -54,10 +54,11 @@ let shiftTypes = [];
 let shiftMap = {};
 let employees = [];     // 員工清單（管理者用）
 
+const shiftTip = s => s.start && s.end ? `上班時間：${s.start} - ${s.end}` : (s.cat === "leave" ? "休假" : "未設定時間");
 const chipHtml = (id, withX = false) => {
   const s = shiftMap[id];
   if (!s) return "";
-  return `<span class="chip" style="background:${esc(s.color)}" data-sid="${id}">${esc(s.name)}${withX ? '<span class="x">×</span>' : ""}</span>`;
+  return `<span class="chip" style="background:${esc(s.color)}" data-sid="${id}" title="${esc(shiftTip(s))}">${esc(s.name)}${withX ? '<span class="x">×</span>' : ""}</span>`;
 };
 
 /* ================= LINE 登入 / 綁定 ================= */
@@ -619,12 +620,20 @@ $("#importBtn").onclick = async () => {
 async function renderShiftList() {
   await loadShiftTypes();
   $("#shiftList").innerHTML = shiftTypes.length ? shiftTypes.map(s => `
-    <tr>
-      <td>${s.cat === "leave" ? "休假" : "班別"}</td>
-      <td><span class="swatch" style="background:${esc(s.color)}"></span>${esc(s.name)}</td>
-      <td>${s.start && s.end ? `${s.start} ~ ${s.end}` : "—"}</td>
-      <td><button class="btn small danger" data-del="${s.id}">刪除</button></td>
-    </tr>`).join("") : `<tr><td colspan="4" class="empty">尚未建立班別</td></tr>`;
+    <tr data-id="${s.id}">
+      <td><select class="s-cat">
+        <option value="shift" ${s.cat !== "leave" ? "selected" : ""}>班別</option>
+        <option value="leave" ${s.cat === "leave" ? "selected" : ""}>休假</option>
+      </select></td>
+      <td><input class="s-name" value="${esc(s.name)}" size="22"></td>
+      <td><input class="s-start" type="time" value="${esc(s.start || "")}"></td>
+      <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
+      <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
+      <td>
+        <button class="btn small primary s-save">儲存</button>
+        <button class="btn small danger s-del">刪除</button>
+      </td>
+    </tr>`).join("") : `<tr><td colspan="6" class="empty">尚未建立班別</td></tr>`;
 }
 $("#shiftForm").onsubmit = async e => {
   e.preventDefault();
@@ -645,11 +654,30 @@ $("#shiftForm").onsubmit = async e => {
   } catch (err) { toast("新增失敗：" + errMsg(err)); }
 };
 $("#shiftList").onclick = async e => {
-  const id = e.target.dataset.del;
-  if (!id || !confirm(`確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`)) return;
-  await deleteDoc(doc(db, "shiftTypes", id));
-  toast("已刪除");
-  renderShiftList();
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr) return;
+  const id = tr.dataset.id;
+  try {
+    if (e.target.classList.contains("s-save")) {
+      const data = {
+        cat: $(".s-cat", tr).value,
+        name: $(".s-name", tr).value.trim(),
+        start: $(".s-start", tr).value,
+        end: $(".s-end", tr).value,
+        color: $(".s-color", tr).value
+      };
+      if (!data.name) return toast("名稱不可空白");
+      if ((data.start && !data.end) || (!data.start && data.end)) return toast("上班與下班時間要一起填，或都留空");
+      await updateDoc(doc(db, "shiftTypes", id), data);
+      shiftMap[id] = { ...shiftMap[id], ...data };
+      toast(`已儲存「${data.name}」`);
+    } else if (e.target.classList.contains("s-del")) {
+      if (!confirm(`確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`)) return;
+      await deleteDoc(doc(db, "shiftTypes", id));
+      toast("已刪除");
+      renderShiftList();
+    }
+  } catch (err) { toast("操作失敗：" + errMsg(err)); }
 };
 
 // ---- 批次新增班別 ----
@@ -730,7 +758,7 @@ async function loadScheduling() {
   $("#schTitle").textContent = `${y}/${+m}月班表`;
 
   const pal = cat => shiftTypes.filter(s => (s.cat || "shift") === cat).map(s =>
-    `<span class="chip ${selShift === s.id ? "sel" : ""}" style="background:${esc(s.color)}" data-pick="${s.id}">${esc(s.name)}</span>`
+    `<span class="chip ${selShift === s.id ? "sel" : ""}" style="background:${esc(s.color)}" data-pick="${s.id}" title="${esc(shiftTip(s))}">${esc(s.name)}</span>`
   ).join("") || `<span class="hint" style="margin:0">（請先到「班別設定」新增）</span>`;
   $("#palShift").innerHTML = pal("shift");
   $("#palLeave").innerHTML = pal("leave");
