@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>打卡系統</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -128,6 +128,14 @@
           </form>
           <p class="hint">員工第一次用 LINE 登入時，點選自己的名字並輸入這裡的 Email，就會完成綁定。Email 輸錯 5 次會鎖定，按「解除綁定」可重設。</p>
         </div>
+        <div class="card">
+          <h3>批次匯入員工</h3>
+          <textarea id="importText" rows="6" placeholder="每行一位：員編,姓名,Email,到職日,權限&#10;例：W002,蔡宛如,george52069@gmail.com,2025-08-31&#10;權限可留空（預設員工），填 admin 為管理者"></textarea>
+          <div class="form-row" style="margin-top:8px">
+            <button class="btn primary" id="importBtn">匯入</button>
+            <span class="hint" style="margin:0">Email 已存在的會更新資料，不會重複新增；可用逗號或 Tab 分隔（可直接從 Excel 複製）。</span>
+          </div>
+        </div>
         <div class="card table-wrap">
           <table class="tbl">
             <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th>LINE 綁定</th><th>狀態</th><th></th></tr></thead>
@@ -209,6 +217,6 @@
 
 <div id="toast"></div>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=4"></script>
+<script type="module" src="app.js?v=5"></script>
 </body>
 </html>

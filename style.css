@@ -132,3 +132,5 @@ main{flex:1;padding:20px;min-width:0}
 .loading{text-align:center;color:var(--muted)}
 .avatar{width:30px;height:30px;border-radius:50%;object-fit:cover;vertical-align:middle}
 .line-cell{display:flex;align-items:center;gap:6px}
+
+textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit;resize:vertical}

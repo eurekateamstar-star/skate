@@ -6,7 +6,7 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=4";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=5";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -553,6 +553,51 @@ $("#empList").onclick = async e => {
       loadEmployeesView();
     }
   } catch (err) { toast("操作失敗：" + errMsg(err)); }
+};
+
+$("#importBtn").onclick = async () => {
+  const lines = $("#importText").value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return toast("請先貼上員工資料");
+  $("#importBtn").disabled = true;
+  try {
+    await loadEmployees();
+    const byEmail = Object.fromEntries(employees.map(e => [(e.email || "").toLowerCase(), e]));
+    const seen = new Set();
+    const bad = [];
+    let batch = writeBatch(db), n = 0, add = 0, upd = 0;
+    for (const line of lines) {
+      const c = line.split(/\t|,/).map(x => x.trim());
+      if (["員編", "編號"].includes(c[0])) continue;          // 表頭
+      const [empNo = "", rawName = "", rawEmail = "", joinDate = "", role = ""] = c;
+      const email = rawEmail.toLowerCase();
+      const name = rawName.replace(/\s+/g, "");
+      if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || seen.has(email)) { bad.push(line); continue; }
+      seen.add(email);
+      const data = { empNo, name, email, joinDate };
+      if (role) data.role = /admin|管理/i.test(role) ? "admin" : "employee";
+      const ex = byEmail[email];
+      if (ex) {
+        if (ex.id === me.id) delete data.role;              // 不改自己的權限
+        batch.update(doc(db, "employees", ex.id), data); upd++;
+      } else {
+        batch.set(doc(collection(db, "employees")), {
+          role: "employee", ...data, active: true,
+          lineUid: null, lineName: "", linePicture: "", bindFails: 0, createdAt: serverTimestamp()
+        });
+        add++;
+      }
+      if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; }
+    }
+    if (n) await batch.commit();
+    toast(`匯入完成：新增 ${add} 位、更新 ${upd} 位${bad.length ? `，略過 ${bad.length} 行` : ""}`);
+    $("#importText").value = bad.join("\n");
+    if (bad.length) alert("以下資料格式錯誤或重複，已略過（保留在輸入框中）：\n" + bad.join("\n"));
+    loadEmployeesView();
+  } catch (err) {
+    toast("匯入失敗：" + errMsg(err));
+  } finally {
+    $("#importBtn").disabled = false;
+  }
 };
 
 /* ================= 班別設定（管理者） ================= */
