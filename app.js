@@ -1,17 +1,17 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut
+  getAuth, onAuthStateChanged, signInWithCustomToken, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const liff = window.liff;
 
 /* ================= 工具 ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -43,23 +43,15 @@ function dayLabel(dateStr) {
   return `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})`;
 }
 function errMsg(err) {
-  const map = {
-    "auth/invalid-credential": "帳號或密碼錯誤",
-    "auth/invalid-email": "Email 格式錯誤",
-    "auth/email-already-in-use": "此 Email 已註冊",
-    "auth/weak-password": "密碼至少 6 碼",
-    "auth/too-many-requests": "嘗試次數過多，請稍後再試",
-    "permission-denied": "權限不足"
-  };
+  const map = { "permission-denied": "權限不足", "unavailable": "網路連線異常" };
   return map[err.code] || err.message;
 }
 
 /* ================= 狀態 ================= */
-let me = null;              // 目前登入者資料 {uid, name, empNo, role, email}
-let shiftTypes = [];        // 班別清單
-let shiftMap = {};          // id -> 班別
-let users = [];             // 員工清單（管理者用）
-let pendingProfile = null;  // 註冊時暫存
+let me = null;          // 目前登入的員工 {id, name, empNo, role, ...}
+let shiftTypes = [];
+let shiftMap = {};
+let employees = [];     // 員工清單（管理者用）
 
 const chipHtml = (id, withX = false) => {
   const s = shiftMap[id];
@@ -67,75 +59,165 @@ const chipHtml = (id, withX = false) => {
   return `<span class="chip" style="background:${esc(s.color)}" data-sid="${id}">${esc(s.name)}${withX ? '<span class="x">×</span>' : ""}</span>`;
 };
 
-/* ================= 登入 / 註冊 ================= */
-let mode = "login";
-$$(".tabs button").forEach(b => b.onclick = () => {
-  mode = b.dataset.tab;
-  $$(".tabs button").forEach(x => x.classList.toggle("active", x === b));
-  $$(".reg-only").forEach(x => x.classList.toggle("hidden", mode !== "register"));
-  $("#authSubmit").textContent = mode === "login" ? "登入" : "註冊";
-  $("#authMsg").textContent = "";
-});
+/* ================= LINE 登入 / 綁定 ================= */
+const STEPS = ["stepLogin", "stepPick", "stepEmail"];
+const redirectUri = () => location.origin + location.pathname;
 
-$("#authForm").onsubmit = async e => {
-  e.preventDefault();
-  $("#authMsg").textContent = "";
-  const email = $("#email").value.trim(), pw = $("#password").value;
-  $("#authSubmit").disabled = true;
+function showLogin(step = "stepLogin") {
+  $("#appView").classList.add("hidden");
+  $("#loginView").classList.remove("hidden");
+  $("#authLoading").classList.add("hidden");
+  STEPS.forEach(s => $("#" + s).classList.toggle("hidden", s !== step));
+}
+function loading() {
+  $("#appView").classList.add("hidden");
+  $("#loginView").classList.remove("hidden");
+  $("#authLoading").classList.remove("hidden");
+  STEPS.forEach(s => $("#" + s).classList.add("hidden"));
+}
+const setMsg = m => $("#authMsg").textContent = m || "";
+
+async function boot() {
+  loading();
   try {
-    if (mode === "login") {
-      await signInWithEmailAndPassword(auth, email, pw);
-    } else {
-      const name = $("#regName").value.trim();
-      if (!name) throw new Error("請輸入姓名");
-      pendingProfile = { name, empNo: $("#regEmpNo").value.trim() };
-      await createUserWithEmailAndPassword(auth, email, pw);
-    }
+    await liff.init({ liffId: LIFF_ID });
+  } catch (e) {
+    setMsg("LINE 初始化失敗，請確認 config.js 的 LIFF_ID：" + e.message);
+    return showLogin();
+  }
+  // 已有 Firebase 登入狀態就直接進入
+  const user = await new Promise(res => { const un = onAuthStateChanged(auth, u => { un(); res(u); }); });
+  if (user && await enterApp(user)) return;
+  if (liff.isLoggedIn()) return lineAuth();
+  showLogin();
+}
+
+async function callWorker(path, data = {}) {
+  const idToken = liff.getIDToken();
+  if (!idToken) { liff.login({ redirectUri: redirectUri() }); throw new Error("redirect"); }
+  const r = await fetch(WORKER_URL.replace(/\/$/, "") + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, ...data })
+  });
+  const d = await r.json().catch(() => ({ error: "伺服器回應錯誤" }));
+  if (d.error === "invalid_token") {   // LINE 登入過期，重新登入
+    liff.logout();
+    liff.login({ redirectUri: redirectUri() });
+    throw new Error("redirect");
+  }
+  return d;
+}
+
+let picked = null;
+
+async function lineAuth() {
+  loading(); setMsg("");
+  try {
+    const d = await callWorker("/auth");
+    if (d.error === "disabled") throw new Error("你的帳號已被停用，請聯絡管理者");
+    if (d.error) throw new Error(d.message || d.error);
+    if (d.bound) return finishLogin(d.token);
+
+    $("#lineName").textContent = d.lineName || "";
+    const list = d.candidates || [];
+    $("#candList").innerHTML = list.length
+      ? list.map(c => `<button class="cand" data-id="${esc(c.id)}" data-name="${esc(c.name)}">${esc(c.name)}${c.empNo ? `<small>${esc(c.empNo)}</small>` : ""}</button>`).join("")
+      : `<p class="empty">目前沒有可綁定的員工，請聯絡管理者先建立你的資料。</p>`;
+    showLogin("stepPick");
+  } catch (e) {
+    if (e.message === "redirect") return;
+    setMsg("登入失敗：" + e.message);
+    showLogin();
+  }
+}
+
+async function finishLogin(token) {
+  const cred = await signInWithCustomToken(auth, token);
+  if (!await enterApp(cred.user)) {
+    setMsg("找不到員工資料或帳號已停用");
+    showLogin();
+  }
+}
+
+$("#lineLoginBtn").onclick = () => {
+  setMsg("");
+  if (!liff.isLoggedIn()) liff.login({ redirectUri: redirectUri() });
+  else lineAuth();
+};
+
+$("#candList").onclick = e => {
+  const b = e.target.closest(".cand");
+  if (!b) return;
+  picked = { id: b.dataset.id, name: b.dataset.name };
+  $("#pickName").textContent = picked.name;
+  $("#bindEmail").value = "";
+  setMsg("");
+  showLogin("stepEmail");
+  $("#bindEmail").focus();
+};
+$("#backPick").onclick = () => { setMsg(""); showLogin("stepPick"); };
+
+$("#bindForm").onsubmit = async e => {
+  e.preventDefault();
+  if (!picked) return;
+  $("#bindBtn").disabled = true; setMsg("");
+  try {
+    const d = await callWorker("/bind", { empId: picked.id, email: $("#bindEmail").value.trim() });
+    const msgs = {
+      email_mismatch: `Email 不正確，還可以再試 ${d.left} 次`,
+      locked: "嘗試太多次已鎖定，請聯絡管理者解除",
+      already_bound: "這位員工已經綁定其他 LINE 帳號",
+      already_bound_line: "你的 LINE 已經綁定其他員工",
+      not_found: "找不到這位員工"
+    };
+    if (d.error) return setMsg(msgs[d.error] || d.message || d.error);
+    toast("綁定成功！");
+    await finishLogin(d.token);
   } catch (err) {
-    $("#authMsg").textContent = errMsg(err);
+    if (err.message !== "redirect") setMsg("綁定失敗：" + err.message);
   } finally {
-    $("#authSubmit").disabled = false;
+    $("#bindBtn").disabled = false;
   }
 };
 
-$("#logoutBtn").onclick = () => signOut(auth);
+$("#logoutBtn").onclick = async () => {
+  await signOut(auth);
+  if (liff.isLoggedIn() && !liff.isInClient()) liff.logout();
+  me = null;
+  setMsg("");
+  showLogin();
+};
 
-onAuthStateChanged(auth, async user => {
-  if (!user) {
-    me = null;
-    $("#appView").classList.add("hidden");
-    $("#authView").classList.remove("hidden");
-    return;
-  }
+async function enterApp(user) {
   try {
-    const ref = doc(db, "users", user.uid);
-    let snap = await getDoc(ref);
-    if (!snap.exists()) {
-      const p = pendingProfile || { name: user.email.split("@")[0], empNo: "" };
-      await setDoc(ref, { ...p, email: user.email, role: "employee", createdAt: serverTimestamp() });
-      snap = await getDoc(ref);
-    }
-    pendingProfile = null;
-    me = { uid: user.uid, ...snap.data() };
+    const { claims } = await user.getIdTokenResult();
+    if (!claims.empId) { await signOut(auth); return false; }
+    const snap = await getDoc(doc(db, "employees", claims.empId));
+    if (!snap.exists()) { await signOut(auth); return false; }
+    me = { id: snap.id, ...snap.data() };
+
     $("#userName").textContent = `${me.name}${me.role === "admin" ? "（管理者）" : ""}`;
+    if (me.linePicture) { $("#userPic").src = me.linePicture; $("#userPic").classList.remove("hidden"); }
     $(".admin-only").classList.toggle("hidden", me.role !== "admin");
     await loadShiftTypes();
-    $("#authView").classList.add("hidden");
+    $("#loginView").classList.add("hidden");
     $("#appView").classList.remove("hidden");
     showView("clock");
+    return true;
   } catch (err) {
     console.error(err);
-    $("#authMsg").textContent = "載入資料失敗：" + errMsg(err);
-    await signOut(auth);
+    await signOut(auth);   // 例如被解除綁定 → 讀取被拒
+    return false;
   }
-});
+}
 
 /* ================= 導覽 ================= */
 const loaders = {
   clock: loadClock,
   records: loadRecords,
   mySchedule: loadMySchedule,
-  employees: loadEmployees,
+  employees: loadEmployeesView,
   shifts: renderShiftList,
   scheduling: loadScheduling,
   report: loadReport
@@ -150,7 +232,6 @@ function showView(name) {
 $$(".sidebar a").forEach(a => a.onclick = () => showView(a.dataset.view));
 $("#menuBtn").onclick = () => $("#sidebar").classList.toggle("open");
 
-// 月份選擇器預設本月
 const thisMonth = ym(new Date());
 ["#recMonth", "#mySchMonth", "#schMonth", "#repMonth"].forEach(s => $(s).value = thisMonth);
 $("#recMonth").onchange = () => loadRecords();
@@ -166,7 +247,6 @@ async function loadShiftTypes() {
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
 }
-
 function shiftWindow(ids) {
   const ss = (ids || []).map(id => shiftMap[id]).filter(s => s && s.start && s.end);
   if (!ss.length) return null;
@@ -184,7 +264,7 @@ function tick() {
 
 async function loadClock() {
   const today = ymd(new Date());
-  const sch = await getDoc(doc(db, "schedules", `${me.uid}_${today}`));
+  const sch = await getDoc(doc(db, "schedules", `${me.id}_${today}`));
   const ids = sch.exists() ? sch.data().shiftIds || [] : [];
   $("#todayShift").innerHTML = ids.length
     ? "今日班別：" + ids.map(id => chipHtml(id)).join("")
@@ -195,10 +275,8 @@ async function loadClock() {
 async function loadToday() {
   const today = ymd(new Date());
   const snap = await getDocs(query(collection(db, "attendance"),
-    where("uid", "==", me.uid), where("date", "==", today)));
-  const list = snap.docs.map(d => d.data())
-    .map(r => ({ ...r, t: r.ts?.toDate() || new Date(r.clientTime) }))
-    .sort((a, b) => a.t - b.t);
+    where("empId", "==", me.id), where("date", "==", today)));
+  const list = snap.docs.map(toRec).sort((a, b) => a.t - b.t);
   $("#todayList").innerHTML = list.length ? list.map(r => `
     <tr>
       <td><span class="tag ${r.type}">${r.type === "in" ? "上班" : "下班"}</span></td>
@@ -227,7 +305,7 @@ async function punch(type) {
     const now = new Date();
     const pos = await getPosition();
     await addDoc(collection(db, "attendance"), {
-      uid: me.uid, name: me.name, empNo: me.empNo || "",
+      empId: me.id, name: me.name, empNo: me.empNo || "",
       type, date: ymd(now), month: ym(now),
       ts: serverTimestamp(), clientTime: now.toISOString(),
       lat: pos?.lat ?? null, lng: pos?.lng ?? null
@@ -245,12 +323,13 @@ $("#clockIn").onclick = () => punch("in");
 $("#clockOut").onclick = () => punch("out");
 
 /* ================= 出勤彙整（共用） ================= */
-// 把打卡紀錄依「人 + 日期」分組：第一筆上班、最後一筆下班
+const toRec = d => { const r = d.data(); return { ...r, t: r.ts?.toDate() || new Date(r.clientTime) }; };
+
 function groupDaily(records) {
   const map = {};
   records.forEach(r => {
-    const k = `${r.uid}_${r.date}`;
-    map[k] ??= { uid: r.uid, name: r.name, empNo: r.empNo, date: r.date, ins: [], outs: [] };
+    const k = `${r.empId}_${r.date}`;
+    map[k] ??= { empId: r.empId, date: r.date, ins: [], outs: [] };
     (r.type === "in" ? map[k].ins : map[k].outs).push(r);
   });
   for (const g of Object.values(map)) {
@@ -263,7 +342,6 @@ function groupDaily(records) {
   return map;
 }
 
-// 結合班表計算每日狀態
 function dayStatus(g, ids, dateStr) {
   const today = ymd(new Date());
   const st = [];
@@ -282,14 +360,13 @@ function dayStatus(g, ids, dateStr) {
   return st;
 }
 const statusHtml = st => st.map(([c, t]) => `<span class="tag ${c}">${t}</span>`).join("");
-const toRec = d => { const r = d.data(); return { ...r, t: r.ts?.toDate() || new Date(r.clientTime) }; };
 
 /* ================= 我的出勤紀錄 ================= */
 async function loadRecords() {
   const month = $("#recMonth").value;
   const [attSnap, schSnap] = await Promise.all([
-    getDocs(query(collection(db, "attendance"), where("uid", "==", me.uid), where("month", "==", month))),
-    getDocs(query(collection(db, "schedules"), where("uid", "==", me.uid), where("month", "==", month)))
+    getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("month", "==", month))),
+    getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month)))
   ]);
   const groups = groupDaily(attSnap.docs.map(toRec));
   const sch = {};
@@ -298,7 +375,7 @@ async function loadRecords() {
   let rows = "", days = 0, total = 0, late = 0;
   for (const d of daysOfMonth(month)) {
     const ds = ymd(d);
-    const g = groups[`${me.uid}_${ds}`];
+    const g = groups[`${me.id}_${ds}`];
     const ids = sch[ds];
     if (!g && !ids) continue;
     const st = dayStatus(g, ids, ds);
@@ -325,7 +402,7 @@ async function loadRecords() {
 async function loadMySchedule() {
   const month = $("#mySchMonth").value;
   const snap = await getDocs(query(collection(db, "schedules"),
-    where("uid", "==", me.uid), where("month", "==", month)));
+    where("empId", "==", me.id), where("month", "==", month)));
   const sch = {};
   snap.forEach(d => sch[d.data().date] = d.data().shiftIds || []);
   const days = daysOfMonth(month);
@@ -343,41 +420,94 @@ async function loadMySchedule() {
 }
 
 /* ================= 員工管理（管理者） ================= */
-async function loadUsers() {
-  const snap = await getDocs(collection(db, "users"));
-  users = snap.docs.map(d => ({ uid: d.id, ...d.data() }))
-    .sort((a, b) => (a.empNo || "zzz").localeCompare(b.empNo || "zzz") || a.name.localeCompare(b.name));
-}
-
 async function loadEmployees() {
-  await loadUsers();
-  $("#empList").innerHTML = users.map(u => `
-    <tr data-uid="${u.uid}">
-      <td><input class="e-no" value="${esc(u.empNo)}" size="8"></td>
-      <td><input class="e-name" value="${esc(u.name)}" size="10"></td>
-      <td>${esc(u.email)}</td>
+  const snap = await getDocs(collection(db, "employees"));
+  employees = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.empNo || "zzz").localeCompare(b.empNo || "zzz") || (a.name || "").localeCompare(b.name || ""));
+}
+const activeEmployees = () => employees.filter(e => e.active !== false);
+
+async function loadEmployeesView() {
+  await loadEmployees();
+  $("#empList").innerHTML = employees.map(u => {
+    const locked = (u.bindFails || 0) >= 5;
+    const lineCell = u.lineUid
+      ? `<span class="line-cell">${u.linePicture ? `<img class="avatar" src="${esc(u.linePicture)}" alt="">` : ""}${esc(u.lineName || "已綁定")}</span>`
+      : locked ? `<span class="tag bad">已鎖定</span>` : `<span class="tag">未綁定</span>`;
+    return `
+    <tr data-id="${u.id}">
+      <td><input class="e-no" value="${esc(u.empNo)}" size="6"></td>
+      <td><input class="e-name" value="${esc(u.name)}" size="8"></td>
+      <td><input class="e-email" type="email" value="${esc(u.email)}" size="20"></td>
       <td><select class="e-role">
-        <option value="employee" ${u.role === "employee" ? "selected" : ""}>員工</option>
+        <option value="employee" ${u.role !== "admin" ? "selected" : ""}>員工</option>
         <option value="admin" ${u.role === "admin" ? "selected" : ""}>管理者</option>
       </select></td>
-      <td><button class="btn small primary e-save">儲存</button></td>
-    </tr>`).join("");
+      <td>${lineCell}</td>
+      <td><select class="e-active">
+        <option value="1" ${u.active !== false ? "selected" : ""}>在職</option>
+        <option value="0" ${u.active === false ? "selected" : ""}>停用</option>
+      </select></td>
+      <td>
+        <button class="btn small primary e-save">儲存</button>
+        ${u.lineUid || locked ? `<button class="btn small e-unbind">解除綁定</button>` : ""}
+        ${u.id !== me.id ? `<button class="btn small danger e-del">刪除</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">尚無員工</td></tr>`;
 }
-$("#empList").onclick = async e => {
-  if (!e.target.classList.contains("e-save")) return;
-  const tr = e.target.closest("tr");
-  const uid = tr.dataset.uid;
+
+$("#empForm").onsubmit = async e => {
+  e.preventDefault();
   const data = {
-    empNo: $(".e-no", tr).value.trim(),
-    name: $(".e-name", tr).value.trim(),
-    role: $(".e-role", tr).value
+    empNo: $("#eNo").value.trim(),
+    name: $("#eName").value.trim(),
+    email: $("#eEmail").value.trim().toLowerCase(),
+    role: $("#eRole").value,
+    active: true, lineUid: null, lineName: "", linePicture: "", bindFails: 0,
+    createdAt: serverTimestamp()
   };
-  if (!data.name) return toast("姓名不可空白");
-  if (uid === me.uid && data.role !== "admin" && !confirm("確定要取消自己的管理者權限？")) return;
+  if (!data.name || !data.email) return;
+  if (employees.some(x => (x.email || "").toLowerCase() === data.email)) return toast("此 Email 已有員工使用");
   try {
-    await updateDoc(doc(db, "users", uid), data);
-    toast("已儲存");
-  } catch (err) { toast("儲存失敗：" + errMsg(err)); }
+    await addDoc(collection(db, "employees"), data);
+    e.target.reset();
+    toast("已新增員工");
+    loadEmployeesView();
+  } catch (err) { toast("新增失敗：" + errMsg(err)); }
+};
+
+$("#empList").onclick = async e => {
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+  const id = tr.dataset.id;
+  const emp = employees.find(x => x.id === id);
+  try {
+    if (e.target.classList.contains("e-save")) {
+      const data = {
+        empNo: $(".e-no", tr).value.trim(),
+        name: $(".e-name", tr).value.trim(),
+        email: $(".e-email", tr).value.trim().toLowerCase(),
+        role: $(".e-role", tr).value,
+        active: $(".e-active", tr).value === "1"
+      };
+      if (!data.name) return toast("姓名不可空白");
+      if (id === me.id && (data.role !== "admin" || !data.active)
+        && !confirm("確定要取消自己的管理者權限或停用自己？")) return;
+      await updateDoc(doc(db, "employees", id), data);
+      toast("已儲存");
+    } else if (e.target.classList.contains("e-unbind")) {
+      if (!confirm(`解除「${emp.name}」的 LINE 綁定？他下次登入需要重新綁定。`)) return;
+      await updateDoc(doc(db, "employees", id), { lineUid: null, lineName: "", linePicture: "", bindFails: 0 });
+      toast("已解除綁定");
+      loadEmployeesView();
+    } else if (e.target.classList.contains("e-del")) {
+      if (!confirm(`刪除員工「${emp.name}」？打卡紀錄會保留。`)) return;
+      await deleteDoc(doc(db, "employees", id));
+      toast("已刪除");
+      loadEmployeesView();
+    }
+  } catch (err) { toast("操作失敗：" + errMsg(err)); }
 };
 
 /* ================= 班別設定（管理者） ================= */
@@ -419,11 +549,11 @@ $("#shiftList").onclick = async e => {
 
 /* ================= 排班作業（管理者） ================= */
 let selShift = null;
-let schedMap = {}; // `${uid}_${date}` -> shiftIds
+let schedMap = {}; // `${empId}_${date}` -> shiftIds
 
 async function loadScheduling() {
   const month = $("#schMonth").value;
-  await Promise.all([loadUsers(), loadShiftTypes()]);
+  await Promise.all([loadEmployees(), loadShiftTypes()]);
   const snap = await getDocs(query(collection(db, "schedules"), where("month", "==", month)));
   schedMap = {};
   snap.forEach(d => schedMap[d.id] = d.data().shiftIds || []);
@@ -431,7 +561,6 @@ async function loadScheduling() {
   const [y, m] = month.split("-");
   $("#schTitle").textContent = `${y}/${+m}月班表`;
 
-  // 色票
   const pal = cat => shiftTypes.filter(s => (s.cat || "shift") === cat).map(s =>
     `<span class="chip ${selShift === s.id ? "sel" : ""}" style="background:${esc(s.color)}" data-pick="${s.id}">${esc(s.name)}</span>`
   ).join("") || `<span class="hint" style="margin:0">（請先到「班別設定」新增）</span>`;
@@ -443,19 +572,20 @@ async function loadScheduling() {
 
 function renderSchedTable(month) {
   const days = daysOfMonth(month);
+  const list = activeEmployees();
   const wk = d => (d.getDay() === 0 || d.getDay() === 6) ? "wkend" : "";
   let html = `<thead><tr><th class="name">姓名/員編</th>${days.map(d =>
     `<th class="${wk(d)}">${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})</th>`).join("")}</tr></thead><tbody>`;
-  for (const u of users) {
+  for (const u of list) {
     html += `<tr><td class="name">${esc(u.name)}<div class="emp-no">${esc(u.empNo || "")}</div></td>`;
     for (const d of days) {
-      const key = `${u.uid}_${ymd(d)}`;
+      const key = `${u.id}_${ymd(d)}`;
       html += `<td class="cell ${wk(d)}" data-key="${key}">${(schedMap[key] || []).map(id => chipHtml(id, true)).join("")}</td>`;
     }
     html += "</tr>";
   }
   html += "</tbody>";
-  $("#schedTable").innerHTML = users.length ? html : `<tbody><tr><td class="empty">尚無員工</td></tr></tbody>`;
+  $("#schedTable").innerHTML = list.length ? html : `<tbody><tr><td class="empty">尚無員工</td></tr></tbody>`;
 }
 
 $("#view-scheduling").addEventListener("click", e => {
@@ -482,10 +612,11 @@ $("#schedTable").onclick = async e => {
 };
 
 async function saveCell(key, ids, cell) {
-  const [uid, date] = key.split("_");
+  const i = key.lastIndexOf("_");
+  const empId = key.slice(0, i), date = key.slice(i + 1);
   try {
     if (ids.length) {
-      await setDoc(doc(db, "schedules", key), { uid, date, month: date.slice(0, 7), shiftIds: ids });
+      await setDoc(doc(db, "schedules", key), { empId, date, month: date.slice(0, 7), shiftIds: ids });
     } else {
       await deleteDoc(doc(db, "schedules", key));
     }
@@ -499,26 +630,25 @@ $("#copyPrevBtn").onclick = async () => {
   const prev = prevMonth(month);
   if (!confirm(`將 ${prev} 的班表依「星期幾」對應複製到 ${month}？（會覆蓋本月已有的同一天）`)) return;
   const snap = await getDocs(query(collection(db, "schedules"), where("month", "==", prev)));
-  // 以每位員工上月「每個星期幾最後一次出現的班」當模板
   const tpl = {};
   snap.docs.map(d => d.data()).sort((a, b) => a.date.localeCompare(b.date)).forEach(s => {
     const wd = new Date(s.date + "T00:00:00").getDay();
-    tpl[`${s.uid}_${wd}`] = s.shiftIds;
+    tpl[`${s.empId}_${wd}`] = s.shiftIds;
   });
-  const batch = writeBatch(db);
-  let n = 0;
-  for (const u of users) {
+  let batch = writeBatch(db), n = 0, total = 0;
+  for (const u of activeEmployees()) {
     for (const d of daysOfMonth(month)) {
-      const ids = tpl[`${u.uid}_${d.getDay()}`];
+      const ids = tpl[`${u.id}_${d.getDay()}`];
       if (!ids?.length) continue;
       const date = ymd(d);
-      batch.set(doc(db, "schedules", `${u.uid}_${date}`), { uid: u.uid, date, month, shiftIds: ids });
-      if (++n >= 490) break; // 單批上限 500
+      batch.set(doc(db, "schedules", `${u.id}_${date}`), { empId: u.id, date, month, shiftIds: ids });
+      total++;
+      if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; }
     }
   }
-  if (!n) return toast("上月沒有班表可複製");
-  await batch.commit();
-  toast(`已複製 ${n} 筆`);
+  if (!total) return toast("上月沒有班表可複製");
+  if (n) await batch.commit();
+  toast(`已複製 ${total} 筆`);
   loadScheduling();
 };
 
@@ -527,7 +657,7 @@ let reportRows = [];
 
 async function loadReport() {
   const month = $("#repMonth").value;
-  await loadUsers();
+  await loadEmployees();
   const [attSnap, schSnap] = await Promise.all([
     getDocs(query(collection(db, "attendance"), where("month", "==", month))),
     getDocs(query(collection(db, "schedules"), where("month", "==", month)))
@@ -538,13 +668,13 @@ async function loadReport() {
 
   const cur = $("#repEmp").value;
   $("#repEmp").innerHTML = `<option value="">全部員工</option>` +
-    users.map(u => `<option value="${u.uid}">${esc(u.empNo)} ${esc(u.name)}</option>`).join("");
+    employees.map(u => `<option value="${u.id}">${esc(u.empNo)} ${esc(u.name)}</option>`).join("");
   $("#repEmp").value = cur;
 
   reportRows = [];
-  for (const u of users) {
+  for (const u of employees) {
     for (const d of daysOfMonth(month)) {
-      const ds = ymd(d), key = `${u.uid}_${ds}`;
+      const ds = ymd(d), key = `${u.id}_${ds}`;
       const g = groups[key], ids = sch[key];
       if (!g && !ids) continue;
       reportRows.push({ u, date: ds, g, ids: ids || [], st: dayStatus(g, ids, ds) });
@@ -555,11 +685,11 @@ async function loadReport() {
 
 function renderReport() {
   const f = $("#repEmp").value;
-  const rows = reportRows.filter(r => !f || r.u.uid === f);
+  const rows = reportRows.filter(r => !f || r.u.id === f);
 
   const sum = {};
   rows.forEach(r => {
-    const s = sum[r.u.uid] ??= { u: r.u, days: 0, hrs: 0, late: 0, early: 0, miss: 0 };
+    const s = sum[r.u.id] ??= { u: r.u, days: 0, hrs: 0, late: 0, early: 0, miss: 0 };
     if (r.g) s.days++;
     s.hrs += r.g?.hrs || 0;
     r.st.forEach(([, t]) => {
@@ -586,7 +716,7 @@ function renderReport() {
 
 $("#csvBtn").onclick = () => {
   const f = $("#repEmp").value;
-  const rows = reportRows.filter(r => !f || r.u.uid === f);
+  const rows = reportRows.filter(r => !f || r.u.id === f);
   const head = ["日期", "員編", "姓名", "班別", "上班", "下班", "工時", "狀態"];
   const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [head.map(q).join(",")].concat(rows.map(r => [
@@ -596,10 +726,13 @@ $("#csvBtn").onclick = () => {
     r.g?.hrs ? r.g.hrs.toFixed(2) : "",
     r.st.map(s => s[1]).join("、")
   ].map(q).join(",")));
-  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `出勤報表_${$("#repMonth").value}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 };
+
+/* ================= 啟動 ================= */
+boot();

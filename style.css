@@ -119,3 +119,16 @@ main{flex:1;padding:20px;min-width:0}
   .cal .day .chip{font-size:10px;padding:2px 3px}
   #userName{display:none}
 }
+
+/* ===== LINE 登入 / 綁定 ===== */
+.line-btn{background:#06C755;border:0;color:#fff;width:100%;padding:14px;font-size:16px;font-weight:600;border-radius:8px}
+.lead{line-height:1.7;color:#444;margin:0 0 14px}
+.cand-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;max-height:50vh;overflow:auto}
+.cand{border:1px solid var(--line);background:#fff;border-radius:8px;padding:12px 6px;cursor:pointer;font-size:15px}
+.cand:hover{border-color:var(--green);background:#f2f7f3}
+.cand small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+#bindForm{display:flex;flex-direction:column;gap:10px}
+.btn.link{border:0;background:none;color:var(--muted);padding:8px 0;margin-top:6px}
+.loading{text-align:center;color:var(--muted)}
+.avatar{width:30px;height:30px;border-radius:50%;object-fit:cover;vertical-align:middle}
+.line-cell{display:flex;align-items:center;gap:6px}

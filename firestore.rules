@@ -2,39 +2,42 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() { return request.auth != null; }
-    function isAdmin() {
-      return signedIn() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    // 登入 token 裡帶有 empId（由 Worker 發出），並且必須和員工資料上的 LINE 綁定一致
+    function empPath(id) { return /databases/$(database)/documents/employees/$(id); }
+    function myEmpId() { return request.auth.token.empId; }
+    function bound() {
+      return request.auth != null
+        && request.auth.token.empId is string
+        && exists(empPath(myEmpId()))
+        && get(empPath(myEmpId())).data.lineUid == request.auth.uid
+        && get(empPath(myEmpId())).data.active != false;
+    }
+    function isAdmin() { return bound() && get(empPath(myEmpId())).data.role == 'admin'; }
+
+    // 員工資料：管理者可讀寫；員工只能讀自己（綁定由 Worker 以管理員權限寫入）
+    match /employees/{id} {
+      allow read: if isAdmin() || (bound() && id == myEmpId());
+      allow write: if isAdmin();
     }
 
-    // 員工資料：登入者可讀；自己註冊時只能建立 employee；只有管理者能改權限
-    match /users/{uid} {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.auth.uid == uid
-                    && request.resource.data.role == 'employee';
-      allow update: if isAdmin()
-                    || (request.auth.uid == uid && request.resource.data.role == resource.data.role);
-      allow delete: if isAdmin();
-    }
-
-    // 班別：大家可讀，管理者可改
+    // 班別：已綁定員工可讀，管理者可改
     match /shiftTypes/{id} {
-      allow read: if signedIn();
+      allow read: if bound();
       allow write: if isAdmin();
     }
 
-    // 班表：大家可讀，管理者可改
+    // 班表：員工只能看自己的
     match /schedules/{id} {
-      allow read: if signedIn();
+      allow read: if isAdmin()
+                  || (bound() && (resource == null || resource.data.empId == myEmpId()));
       allow write: if isAdmin();
     }
 
-    // 打卡：只能用自己的身分、伺服器時間新增；員工只能看自己的；不能修改或刪除
+    // 打卡：只能用自己的身分、伺服器時間新增；不能修改或刪除
     match /attendance/{id} {
-      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
-      allow create: if signedIn()
-                    && request.resource.data.uid == request.auth.uid
+      allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow create: if bound()
+                    && request.resource.data.empId == myEmpId()
                     && request.resource.data.ts == request.time;
       allow update, delete: if isAdmin();
     }

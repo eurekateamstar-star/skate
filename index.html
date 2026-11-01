@@ -8,21 +8,30 @@
 </head>
 <body>
 
-<!-- ========== 登入 / 註冊 ========== -->
-<div id="authView" class="auth hidden">
+<!-- ========== LINE 登入 / 綁定 ========== -->
+<div id="loginView" class="auth hidden">
   <div class="auth-card">
     <h1>⏱ 打卡系統</h1>
-    <div class="tabs">
-      <button data-tab="login" class="active">登入</button>
-      <button data-tab="register">註冊</button>
+
+    <div id="stepLogin" class="hidden">
+      <button class="btn line-btn" id="lineLoginBtn">使用 LINE 登入</button>
     </div>
-    <form id="authForm">
-      <input id="regName" placeholder="姓名" class="reg-only hidden">
-      <input id="regEmpNo" placeholder="員工編號（例：W001）" class="reg-only hidden">
-      <input id="email" type="email" placeholder="Email" required autocomplete="username">
-      <input id="password" type="password" placeholder="密碼（至少 6 碼）" required minlength="6" autocomplete="current-password">
-      <button type="submit" class="btn primary" id="authSubmit">登入</button>
-    </form>
+
+    <div id="stepPick" class="hidden">
+      <p class="lead">嗨 <b id="lineName"></b>，第一次使用請先綁定員工身分。<br>請點選你的名字：</p>
+      <div class="cand-list" id="candList"></div>
+    </div>
+
+    <div id="stepEmail" class="hidden">
+      <p class="lead">你選擇了 <b id="pickName"></b><br>請輸入公司登記的 Email 驗證身分：</p>
+      <form id="bindForm">
+        <input type="email" id="bindEmail" required placeholder="Email">
+        <button class="btn primary" id="bindBtn">確認綁定</button>
+      </form>
+      <button class="btn link" id="backPick">← 重新選擇</button>
+    </div>
+
+    <p class="loading" id="authLoading">載入中…</p>
     <p class="msg" id="authMsg"></p>
   </div>
 </div>
@@ -33,6 +42,7 @@
     <button id="menuBtn" class="icon-btn" aria-label="選單">☰</button>
     <div class="brand">⏱ 打卡系統</div>
     <div class="user">
+      <img id="userPic" class="avatar hidden" alt="">
       <span id="userName"></span>
       <button id="logoutBtn" class="btn small">登出</button>
     </div>
@@ -104,12 +114,25 @@
       <!-- 員工管理 -->
       <section id="view-employees" class="view hidden">
         <div class="view-head"><h2>員工管理</h2></div>
+        <div class="card">
+          <h3>新增員工</h3>
+          <form id="empForm" class="form-row">
+            <input id="eNo" placeholder="員編" size="8">
+            <input id="eName" placeholder="姓名" required size="10">
+            <input id="eEmail" type="email" placeholder="Email（綁定驗證用）" required>
+            <select id="eRole">
+              <option value="employee">員工</option>
+              <option value="admin">管理者</option>
+            </select>
+            <button class="btn primary">新增</button>
+          </form>
+          <p class="hint">員工第一次用 LINE 登入時，點選自己的名字並輸入這裡的 Email，就會完成綁定。Email 輸錯 5 次會鎖定，按「解除綁定」可重設。</p>
+        </div>
         <div class="card table-wrap">
           <table class="tbl">
-            <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th></th></tr></thead>
+            <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th>LINE 綁定</th><th>狀態</th><th></th></tr></thead>
             <tbody id="empList"></tbody>
           </table>
-          <p class="hint">新員工請自行在登入頁「註冊」，註冊後會出現在這裡，可修改員編、姓名與權限。</p>
         </div>
       </section>
 
@@ -185,6 +208,7 @@
 </div>
 
 <div id="toast"></div>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

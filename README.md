@@ -1,95 +1,112 @@
-# ⏱ 打卡系統（HTML + JavaScript + Firebase）
+# ⏱ 打卡系統（LINE 登入版）
 
-純前端的打卡 / 排班系統，資料存在 Firebase Firestore，網頁放在 GitHub Pages，不需要自己的伺服器。
+HTML + JavaScript + Firebase，網頁放 GitHub Pages，LINE 身分驗證交給 Cloudflare Worker（免費）。
 
-## 功能
+```
+員工手機 ──LINE 登入──▶ 網頁(GitHub Pages) ──LINE token──▶ Cloudflare Worker
+                                 ▲                         │ 向 LINE 驗證身分
+                                 └──── Firebase 登入 ◀──────┘ 查員工綁定
+```
 
-**員工**
-- 上班 / 下班打卡（使用伺服器時間，可記錄 GPS 位置）
-- 查看當月出勤紀錄（工時、遲到、早退、缺卡）
-- 月曆檢視自己的班表
-
-**管理者**
-- 員工管理：修改員編、姓名、權限
-- 班別設定：班別（含上下班時間）與休假類別，自訂顏色
-- 排班作業：員工 × 日期表格，點選班別再點格子排班、× 移除、複製上月
-- 出勤報表：月統計、每日明細、下載 CSV（Excel 可直接開）
+## 綁定流程
+1. 管理者在「員工管理」建立員工（姓名、員編、Email）
+2. 員工用 LINE 登入 → 第一次會看到員工名單 → 點自己的名字 → 輸入 Email
+3. Email 對上就綁定完成，之後用 LINE 登入就直接進入打卡畫面
+4. Email 輸錯 5 次會鎖定；換手機 / 換 LINE 帳號時，管理者按「解除綁定」即可重新綁定
 
 ## 檔案
 
-| 檔案 | 說明 |
+| 檔案 | 放哪裡 |
 |---|---|
-| `index.html` | 頁面 |
-| `style.css` | 樣式 |
-| `app.js` | 程式邏輯 |
-| `firebase-config.js` | **填入你的 Firebase 設定** |
-| `firestore.rules` | 資料庫安全規則（貼到 Firebase Console） |
+| `index.html`、`style.css`、`app.js`、`config.js` | **GitHub**（網站本體，`config.js` 要先填好） |
+| `worker.js` | **Cloudflare Worker**（貼到 Worker 程式碼編輯器） |
+| `firestore.rules` | **Firebase Console → Firestore → 規則** |
+| `README.md` | GitHub（說明文件） |
+
+> `worker.js` 放在 GitHub 也沒關係（裡面沒有密碼），但它是在 Cloudflare 執行的。
 
 ---
 
-## 安裝步驟
+## 設定步驟
 
-### 1. 建立 Firebase 專案
-1. 到 <https://console.firebase.google.com> → 新增專案
-2. **Authentication** → 開始使用 → 登入方式 → 啟用「電子郵件/密碼」
-3. **Firestore Database** → 建立資料庫 → 選地區（建議 `asia-east1` 台灣）→ 正式版模式
-4. Firestore → **規則** 分頁 → 把 `firestore.rules` 的內容整份貼上 → 發布
-5. 專案設定（齒輪）→ 一般 → 你的應用程式 → 點 `</>` 新增網頁應用程式 → 複製 `firebaseConfig`
+### 1. Firebase
+1. <https://console.firebase.google.com> → 新增專案
+2. **Authentication → 開始使用**（不需要啟用任何登入方式，LINE 登入走自訂 token）
+3. **Firestore Database → 建立資料庫**（地區建議 `asia-east1`）→ **規則** 分頁貼上 `firestore.rules` → 發布
+4. **專案設定 → 一般 → 你的應用程式** → 新增網頁應用程式 `</>` → 複製 `firebaseConfig` 貼到 `config.js`
+5. **專案設定 → 服務帳戶 → 產生新的私密金鑰** → 下載 JSON（等一下給 Worker 用，**不要放上 GitHub**）
 
-### 2. 填入設定
-打開 `firebase-config.js`，把 `firebaseConfig` 換成剛剛複製的內容。
+### 2. 建立第一位管理者（只做一次）
+Firestore → **開始集合** → 集合 ID 填 `employees` → 文件 ID 按「自動產生」→ 新增欄位：
 
-> 這組設定公開在 GitHub 上是正常的，資料安全由 `firestore.rules` 保護。
+| 欄位 | 類型 | 值 |
+|---|---|---|
+| `name` | string | 你的名字 |
+| `empNo` | string | 例如 `BOSS` |
+| `email` | string | 你的 Email（小寫） |
+| `role` | string | `admin` |
+| `active` | boolean | `true` |
+| `lineUid` | null | |
+| `bindFails` | number | `0` |
 
-### 3. 上傳到 GitHub 並開啟 Pages
-```bash
-git init
-git add .
-git commit -m "打卡系統"
-git branch -M main
-git remote add origin https://github.com/你的帳號/punch-clock.git
-git push -u origin main
-```
-GitHub 儲存庫 → **Settings → Pages** → Source 選 `Deploy from a branch` → Branch 選 `main` / `(root)` → Save。
-約 1 分鐘後網址會是：`https://你的帳號.github.io/punch-clock/`
+之後的員工都在網站「員工管理」新增即可。
 
-### 4. 授權網域
-Firebase → Authentication → **設定 → 授權網域** → 新增 `你的帳號.github.io`
+### 3. LINE Developers
+1. <https://developers.line.biz/console/> → 建立 Provider → 建立 **LINE Login** Channel
+   （App types 勾 **Web app**）
+2. Basic settings 記下 **Channel ID**
+3. **LIFF** 分頁 → Add：
+   - Size：`Full`
+   - Endpoint URL：`https://eurekateamstar-star.github.io/skate/`
+   - Scopes：勾 `openid`、`profile`
+   - 記下 **LIFF ID** → 貼到 `config.js`
+4. Channel 狀態從「Developing」改成 **Published**
+   （開發中只有你自己和測試者能登入，員工會登不進來）
 
-### 5. 設定第一位管理者
-1. 打開網站，用「註冊」建立你自己的帳號
-2. Firebase → Firestore → `users` 集合 → 找到你的文件 → 把 `role` 從 `employee` 改成 `admin`
-3. 重新整理網頁，左側就會出現「管理者專區」。之後其他人可以直接在「員工管理」裡設定權限。
+### 4. Cloudflare Worker
+1. <https://dash.cloudflare.com> → **Workers & Pages → 建立 → Worker** → 取名 `punch-auth` → 部署
+2. **編輯程式碼** → 刪掉原本內容，貼上 `worker.js` → **部署**
+3. **設定 → 變數和密碼** → 新增：
 
-### 6. 開始使用
-1. 管理者到「班別設定」建立班別（例：早班 08:00~17:00）與休假（國定假日、例假日…）
-2. 請員工自行註冊
-3. 到「排班作業」排班
-4. 員工登入即可打卡
+| 名稱 | 類型 | 值 |
+|---|---|---|
+| `LINE_CHANNEL_ID` | 文字 | LINE Login Channel ID |
+| `FIREBASE_PROJECT_ID` | 文字 | 服務帳戶 JSON 的 `project_id` |
+| `FIREBASE_CLIENT_EMAIL` | 文字 | 服務帳戶 JSON 的 `client_email` |
+| `FIREBASE_PRIVATE_KEY` | **密碼** | 服務帳戶 JSON 的 `private_key`（整串，含 `-----BEGIN…` 與 `\n`） |
+| `ALLOWED_ORIGIN` | 文字 | `https://eurekateamstar-star.github.io` |
+
+4. 複製 Worker 網址（`https://punch-auth.xxx.workers.dev`）→ 貼到 `config.js` 的 `WORKER_URL`
+
+### 5. GitHub Pages
+把 `index.html`、`style.css`、`app.js`、`config.js`（和 `README.md`）上傳到儲存庫最外層 →
+**Settings → Pages** → Branch `main` / `(root)` → Save。
+
+### 6. 測試
+1. 手機用 LINE 打開 `https://liff.line.me/你的LIFF_ID`（或直接開 GitHub Pages 網址）
+2. 用管理者帳號綁定（點自己的名字、輸入 Email）
+3. 進入後到「班別設定」建班別、「員工管理」加員工、「排班作業」排班
+
+> 小技巧：把 `https://liff.line.me/你的LIFF_ID` 放到 LINE 官方帳號的圖文選單，員工點一下就能打卡。
 
 ---
 
 ## 資料結構（Firestore）
-
 ```
-users/{uid}            name, empNo, email, role('admin'|'employee')
-shiftTypes/{id}        cat('shift'|'leave'), name, start, end, color, order
-schedules/{uid_日期}    uid, date('2026-12-01'), month('2026-12'), shiftIds[]
-attendance/{id}        uid, name, empNo, type('in'|'out'), date, month, ts(伺服器時間), lat, lng
+employees/{empId}        name, empNo, email, role, active, lineUid, lineName, linePicture, bindFails
+shiftTypes/{id}          cat('shift'|'leave'), name, start, end, color, order
+schedules/{empId_日期}    empId, date, month, shiftIds[]
+attendance/{id}          empId, name, empNo, type('in'|'out'), date, month, ts(伺服器時間), lat, lng
 ```
+所有查詢只用「等於」條件，不需要建立複合索引。
 
-所有查詢都只用「等於」條件，**不需要另外建立複合索引**。
+## 安全性
+- LINE 身分由 Worker 向 LINE 伺服器驗證，前端無法偽造
+- 綁定時的 Email 比對在 Worker 進行，員工看不到別人的 Email
+- 打卡一律用 Firebase 伺服器時間，員工不能修改或刪除紀錄
+- 管理者解除綁定或停用員工後，對方立即失去存取權
 
-## 本機測試
-ES Module 不能直接雙擊 html 開啟，請用本機伺服器：
-```bash
-npx serve .
-# 或
-python -m http.server 8000
-```
-並在 Firebase 授權網域確認有 `localhost`（預設已有）。
-
-## 注意事項
-- GPS 需要 HTTPS（GitHub Pages 已是 HTTPS），手機瀏覽器第一次會詢問定位權限。
-- 打卡時間使用 Firebase 伺服器時間，員工改手機時間無效；規則也禁止員工修改或刪除打卡紀錄。
-- 若要限制只能在公司附近打卡，可在 `app.js` 的 `punch()` 裡加入距離判斷（前端限制，可再搭配 Cloud Functions 加強）。
+## 常見問題
+- **一直跳回 LINE 登入**：檢查 LIFF Endpoint URL 是否和網址完全一致（含結尾 `/`）
+- **登入失敗 server_error**：多半是 Worker 變數設錯，到 Worker →「記錄」查看錯誤訊息
+- **權限不足**：確認 `firestore.rules` 已發布，且員工資料的 `active` 不是 `false`
