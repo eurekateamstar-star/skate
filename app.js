@@ -6,12 +6,13 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=19";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=20";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 // LINE App 內建瀏覽器用 long polling 連線，避免 Firestore 卡住
-const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+const IN_LINE = /\bLine\//i.test(navigator.userAgent);
+const db = initializeFirestore(app, IN_LINE ? { experimentalForceLongPolling: true } : { experimentalAutoDetectLongPolling: true });
 const liff = window.liff;
 
 /* ================= 工具 ================= */
@@ -115,19 +116,20 @@ function loading() {
 }
 const setMsg = m => $("#authMsg").textContent = m || "";
 
+let liffReady = null, liffErr = null;
 async function boot() {
   loading();
-  try {
-    await withTimeout(liff.init({ liffId: LIFF_ID }), 15000, "LINE 初始化逾時");
-  } catch (e) {
-    setMsg("LINE 初始化失敗，請確認 config.js 的 LIFF_ID：" + e.message);
-    return showLogin();
-  }
-  // 已有 Firebase 登入狀態就直接進入
+  liffReady = withTimeout(liff.init({ liffId: LIFF_ID }), 15000, "LINE 初始化逾時")
+    .then(() => true).catch(e => { liffErr = e; return false; });
+  // 已有 Firebase 登入狀態就直接進入（不必等 LINE）
   const user = await new Promise(res => { const un = onAuthStateChanged(auth, u => { un(); res(u); }); });
   if (user) {
     if (await enterApp(user)) return;
     if ($("#authMsg").textContent) return showLogin();   // 顯示失敗原因，按按鈕重試
+  }
+  if (!(await liffReady)) {
+    setMsg("LINE 初始化失敗，請確認 config.js 的 LIFF_ID：" + (liffErr?.message || ""));
+    return showLogin();
   }
   if (liff.isLoggedIn()) return lineAuth();
   showLogin();
@@ -225,8 +227,9 @@ async function finishLogin(token) {
   }
 }
 
-$("#lineLoginBtn").onclick = () => {
+$("#lineLoginBtn").onclick = async () => {
   setMsg("");
+  if (liffReady && !(await liffReady)) return setMsg("LINE 初始化失敗：" + (liffErr?.message || ""));
   if (!liff.isLoggedIn()) liff.login({ redirectUri: redirectUri() });
   else lineAuth();
 };
@@ -268,7 +271,8 @@ $("#bindForm").onsubmit = async e => {
 
 $("#logoutBtn").onclick = async () => {
   await signOut(auth);
-  if (liff.isLoggedIn() && !liff.isInClient()) liff.logout();
+  clearCache();
+  try { if (await liffReady && liff.isLoggedIn() && !liff.isInClient()) liff.logout(); } catch {}
   me = null;
   setMsg("");
   showLogin();
@@ -285,26 +289,62 @@ async function enterApp(user) {
   }
 }
 
+// 本機快取：第二次開啟立即顯示，背景再確認
+const CACHE_KEY = "punch_cache_v1";
+const readCache = () => { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; } };
+const writeCache = () => { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: auth.currentUser?.uid, me, shiftTypes })); } catch {} };
+const clearCache = () => { try { localStorage.removeItem(CACHE_KEY); } catch {} };
+
+function showShell() {
+  $("#userName").textContent = `${me.name}${me.role === "admin" ? "（管理者）" : ""}`;
+  if (me.linePicture) { $("#userPic").src = me.linePicture; $("#userPic").classList.remove("hidden"); }
+  $$(".admin-only").forEach(el => el.classList.toggle("hidden", me.role !== "admin"));
+}
+
+async function verifyMe(user, empId) {
+  const [snap] = await Promise.all([getDoc(doc(db, "employees", empId)), loadShiftTypes()]);
+  const d = snap.exists() ? snap.data() : null;
+  if (!d || d.lineUid !== user.uid || d.active === false) throw Object.assign(new Error("帳號已停用或已解除綁定"), { code: "unbound" });
+  me = { id: snap.id, ...d };
+  writeCache();
+  return me;
+}
+
 async function enterAppInner(user) {
   try {
     const { claims } = await user.getIdTokenResult();
     if (!claims.empId) { await signOut(auth); return false; }
-    const snap = await getDoc(doc(db, "employees", claims.empId));
-    if (!snap.exists()) { await signOut(auth); return false; }
-    me = { id: snap.id, ...snap.data() };
-
-    $("#userName").textContent = `${me.name}${me.role === "admin" ? "（管理者）" : ""}`;
-    if (me.linePicture) { $("#userPic").src = me.linePicture; $("#userPic").classList.remove("hidden"); }
-    $$(".admin-only").forEach(el => el.classList.toggle("hidden", me.role !== "admin"));
-    await loadShiftTypes();
+    const cache = readCache();
+    if (cache && cache.uid === user.uid && cache.me?.id === claims.empId) {
+      // 快速路徑：先用快取畫面，背景確認
+      me = cache.me;
+      shiftTypes = cache.shiftTypes || [];
+      shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
+      showShell();
+      $("#loginView").classList.add("hidden");
+      $("#appView").classList.remove("hidden");
+      showView("clock");
+      verifyMe(user, claims.empId).then(showShell).catch(async err => {
+        console.error(err);
+        if (err.code === "unbound" || err.code === "permission-denied") {
+          clearCache(); await signOut(auth); me = null;
+          setMsg("你的帳號已停用或解除綁定，請重新登入");
+          showLogin();
+        }
+      });
+      return true;
+    }
+    await verifyMe(user, claims.empId);
+    showShell();
     $("#loginView").classList.add("hidden");
     $("#appView").classList.remove("hidden");
     showView("clock");
     return true;
   } catch (err) {
     console.error(err);
-    setMsg("讀取員工資料失敗：" + errMsg(err) + "（請確認 firestore.rules 已發布）");
-    await signOut(auth);   // 例如被解除綁定 → 讀取被拒
+    clearCache();
+    setMsg(err.code === "unbound" ? "找不到員工資料或帳號已停用" : "讀取員工資料失敗：" + errMsg(err) + "（請確認 firestore.rules 已發布）");
+    await signOut(auth);
     return false;
   }
 }
@@ -369,6 +409,7 @@ async function loadShiftTypes() {
   shiftTypes = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
+  if (me) writeCache();
 }
 function shiftWindow(ids) {
   const ss = (ids || []).map(id => shiftMap[id]).filter(s => s && s.start && s.end);
@@ -387,12 +428,11 @@ function tick() {
 
 async function loadClock() {
   const today = ymd(new Date());
-  const sch = await getDoc(doc(db, "schedules", `${me.id}_${today}`));
+  const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${me.id}_${today}`)), loadToday()]);
   const ids = sch.exists() ? sch.data().shiftIds || [] : [];
   $("#todayShift").innerHTML = ids.length
     ? "今日班別：" + ids.map(id => chipHtml(id)).join("")
     : "今日無排班";
-  await loadToday();
 }
 
 async function loadToday() {
