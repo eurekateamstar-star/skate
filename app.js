@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=23";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=24";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -501,11 +501,11 @@ function loadLeaflet() {
     document.head.appendChild(sc);
   });
 }
-const TILE = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-const TILE_ATTR = "© OpenStreetMap © CARTO";
+const TILE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const TILE_ATTR = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
 function newMap(L, el) {
   const m = L.map(el, { zoomControl: false, attributionControl: true });
-  L.tileLayer(TILE, { attribution: TILE_ATTR, maxZoom: 20, subdomains: "abcd" }).addTo(m);
+  L.tileLayer(TILE, { attribution: TILE_ATTR, maxZoom: 19 }).addTo(m);
   return m;
 }
 
@@ -1182,6 +1182,34 @@ async function setPick(lat, lng, fromMap) {
   lPick = L.circle([lat, lng], { radius: r, color: "#ff9500", weight: 2, fillOpacity: .18, dashArray: "4 4" }).addTo(lLayer);
   if (!fromMap) lMap.setView([lat, lng], 17);
 }
+// 地址搜尋（OpenStreetMap Nominatim，免費）
+async function searchPlace() {
+  const q = $("#locSearch").value.trim();
+  if (!q) return;
+  const c = parseCoord(q);
+  if (c) { $("#locResults").innerHTML = ""; return setPick(c.lat, c.lng); }
+  $("#locResults").innerHTML = `<div class="loc-res muted">搜尋中…</div>`;
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&countrycodes=tw&accept-language=zh-TW&q=${encodeURIComponent(q)}`);
+    const list = await r.json();
+    $("#locResults").innerHTML = list.length ? list.map(x => `
+      <button type="button" class="loc-res" data-lat="${x.lat}" data-lng="${x.lon}" data-name="${esc((x.name || x.display_name.split(",")[0]).trim())}">
+        <b>${esc(x.name || x.display_name.split(",")[0])}</b><span>${esc(x.display_name)}</span></button>`).join("")
+      : `<div class="loc-res muted">找不到「${esc(q)}」，可以換個關鍵字，或直接在地圖上點選</div>`;
+  } catch {
+    $("#locResults").innerHTML = `<div class="loc-res muted">搜尋失敗，請直接在地圖上點選位置</div>`;
+  }
+}
+$("#locSearchBtn").onclick = searchPlace;
+$("#locSearch").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); searchPlace(); } };
+$("#locResults").onclick = e => {
+  const b = e.target.closest(".loc-res[data-lat]");
+  if (!b) return;
+  setPick(+b.dataset.lat, +b.dataset.lng);
+  if (!$("#locName").value.trim()) $("#locName").value = b.dataset.name;
+  $("#locResults").innerHTML = "";
+};
+
 $("#locCoord").onchange = () => { const c = parseCoord($("#locCoord").value); if (c) setPick(c.lat, c.lng); else toast("看不懂這個座標，請點地圖選位置"); };
 $("#locRadius").oninput = () => { if (lPick) lPick.setRadius(+$("#locRadius").value || 50); };
 $("#locHere").onclick = () => {

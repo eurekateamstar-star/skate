@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=23">
+  <link rel="stylesheet" href="style.css?v=24">
 </head>
 <body>
 
@@ -291,6 +291,11 @@
         <div class="view-head"><h2>班別設定</h2></div>
         <div class="card">
           <h3>打卡地點</h3>
+          <div class="loc-search">
+            <input id="locSearch" placeholder="搜尋地址或地點名稱（例：迎風河濱公園）、或貼上座標">
+            <button type="button" class="btn primary" id="locSearchBtn">搜尋</button>
+          </div>
+          <div id="locResults"></div>
           <div id="locMap" class="loc-map"></div>
           <form id="locForm" class="form-row" style="margin-top:12px">
             <input id="locName" placeholder="地點名稱（例：迎風溜冰場）" required>
@@ -467,6 +472,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=23"></script>
+<script type="module" src="app.js?v=24"></script>
 </body>
 </html>

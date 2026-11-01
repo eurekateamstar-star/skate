@@ -290,6 +290,15 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .radius-in{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px}
 .radius-in input{width:80px}
 .loc-list-wrap{margin-top:14px}
+.loc-search{display:flex;gap:8px;margin-bottom:10px}
+.loc-search input{flex:1;min-width:0}
+#locResults{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+#locResults:empty{display:none}
+.loc-res{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border:0;background:var(--fill);border-radius:10px;padding:10px 12px;cursor:pointer;font-family:var(--font)}
+.loc-res:hover{background:var(--primary-l)}
+.loc-res b{font-size:14px;color:var(--text)}
+.loc-res span{font-size:12px;color:var(--muted);line-height:1.4}
+.loc-res.muted{cursor:default;color:var(--muted);font-size:13px}
 .dlg-input + select.dlg-input,select.dlg-input{text-align:left;text-align-last:left}
 
 /* ---------- 團隊班表（手機） ---------- */
