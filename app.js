@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=9";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=10";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -54,6 +54,14 @@ let shiftTypes = [];
 let shiftMap = {};
 let employees = [];     // 員工清單（管理者用）
 
+function shiftHours(s) {
+  if (!s.start || !s.end) return "";
+  const m = t => { const [h, mm] = t.split(":").map(Number); return h * 60 + mm; };
+  let d = m(s.end) - m(s.start);
+  if (d < 0) d += 1440;
+  if (s.breakStart && s.breakEnd) d -= Math.max(0, m(s.breakEnd) - m(s.breakStart));
+  return `${Math.floor(d / 60)} 小時 ${d % 60} 分鐘`;
+}
 const shiftTip = s => s.start && s.end ? `上班時間：${s.start} - ${s.end}` : (s.cat === "leave" ? "休假" : "未設定時間");
 const chipHtml = (id, withX = false) => {
   const s = shiftMap[id];
@@ -621,6 +629,7 @@ async function renderShiftList() {
   await loadShiftTypes();
   $("#shiftList").innerHTML = shiftTypes.length ? shiftTypes.map(s => `
     <tr data-id="${s.id}">
+      <td><input class="s-code" value="${esc(s.code || "")}" size="5"></td>
       <td><select class="s-cat">
         <option value="shift" ${s.cat !== "leave" ? "selected" : ""}>班別</option>
         <option value="leave" ${s.cat === "leave" ? "selected" : ""}>休假</option>
@@ -628,12 +637,13 @@ async function renderShiftList() {
       <td><input class="s-name" value="${esc(s.name)}" size="22"></td>
       <td><input class="s-start" type="time" value="${esc(s.start || "")}"></td>
       <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
+      <td>${shiftHours(s) || "—"}${s.breakStart && s.breakEnd ? `<div class="emp-no">休息 ${esc(s.breakStart)}~${esc(s.breakEnd)}</div>` : ""}</td>
       <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
       <td>
         <button class="btn small primary s-save">儲存</button>
         <button class="btn small danger s-del">刪除</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="6" class="empty">尚未建立班別</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="8" class="empty">尚未建立班別</td></tr>`;
 }
 $("#shiftForm").onsubmit = async e => {
   e.preventDefault();
@@ -660,6 +670,7 @@ $("#shiftList").onclick = async e => {
   try {
     if (e.target.classList.contains("s-save")) {
       const data = {
+        code: $(".s-code", tr).value.trim(),
         cat: $(".s-cat", tr).value,
         name: $(".s-name", tr).value.trim(),
         start: $(".s-start", tr).value,
@@ -671,6 +682,7 @@ $("#shiftList").onclick = async e => {
       await updateDoc(doc(db, "shiftTypes", id), data);
       shiftMap[id] = { ...shiftMap[id], ...data };
       toast(`已儲存「${data.name}」`);
+      renderShiftList();
     } else if (e.target.classList.contains("s-del")) {
       if (!confirm(`確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`)) return;
       await deleteDoc(doc(db, "shiftTypes", id));
@@ -700,35 +712,45 @@ function parseTimes(name) {
 
 async function addShiftsBulk(items) {
   await loadShiftTypes();
-  const exist = new Set(shiftTypes.map(s => s.name));
-  let batch = writeBatch(db), n = 0, add = 0, skip = 0, fb = 0;
+  const byName = Object.fromEntries(shiftTypes.map(s => [s.name, s]));
+  const seen = new Set();
+  let batch = writeBatch(db), n = 0, add = 0, upd = 0, fb = 0;
   const base = Date.now();
-  items.forEach((it, i) => {
-    if (!it.name || exist.has(it.name)) { skip++; return; }
-    exist.add(it.name);
-    let color = it.color;
-    if (!color) {
-      if (it.cat === "leave") color = LEAVE_COLOR;
-      else color = (COLOR_RULES.find(([re]) => re.test(it.name)) || [, FALLBACK_COLORS[fb++ % FALLBACK_COLORS.length]])[1];
+  for (const [i, it] of items.entries()) {
+    if (!it.name || seen.has(it.name)) continue;
+    seen.add(it.name);
+    const fields = { cat: it.cat || "shift", order: base + i };
+    if (it.code) fields.code = it.code;
+    if (it.start && it.end) { fields.start = it.start; fields.end = it.end; }
+    fields.breakStart = it.breakStart || "";
+    fields.breakEnd = it.breakEnd || "";
+    const ex = byName[it.name];
+    if (ex) {
+      batch.update(doc(db, "shiftTypes", ex.id), fields); upd++;
+    } else {
+      let color = it.cat === "leave" ? LEAVE_COLOR
+        : (COLOR_RULES.find(([re]) => re.test(it.name)) || [, FALLBACK_COLORS[fb++ % FALLBACK_COLORS.length]])[1];
+      batch.set(doc(collection(db, "shiftTypes")), { start: "", end: "", code: "", ...fields, name: it.name, color });
+      add++;
     }
-    batch.set(doc(collection(db, "shiftTypes")), {
-      cat: it.cat || "shift", name: it.name, start: it.start || "", end: it.end || "", color, order: base + i
-    });
-    add++; n++;
-  });
+    if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; }
+  }
   if (n) await batch.commit();
-  toast(`已新增 ${add} 個班別${skip ? `，略過重複 ${skip} 個` : ""}`);
+  toast(`新增 ${add} 個、更新 ${upd} 個班別`);
   renderShiftList();
 }
 
 $("#shiftBulkBtn").onclick = async () => {
+  const isTime = p => /^\d{1,2}:\d{2}$/.test(p);
+  const norm = t => t.padStart(5, "0");
   const items = $("#shiftBulk").value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
-    const parts = line.split(/\t|,/).map(x => x.trim());
-    const name = parts[0];
+    const parts = line.split(/\t|,/).map(x => x.trim()).filter(Boolean);
     const cat = parts.some(p => /^(休假|leave)$/i.test(p)) ? "leave" : "shift";
-    const times = parts.slice(1).filter(p => /^\d{1,2}:\d{2}$/.test(p));
-    const [start, end] = times.length === 2 ? times.map(t => t.padStart(5, "0")) : (cat === "leave" ? ["", ""] : parseTimes(name));
-    return { name, cat, start, end };
+    const texts = parts.filter(p => !isTime(p) && !/^(休假|leave)$/i.test(p));
+    const times = parts.filter(isTime).map(norm);
+    const [code, name] = texts.length >= 2 ? [texts[0], texts[1]] : ["", texts[0]];
+    let [start, end] = times.length >= 2 ? times : (cat === "leave" ? ["", ""] : parseTimes(name || ""));
+    return { code, name, cat, start, end, breakStart: times[2] || "", breakEnd: times[3] || "" };
   });
   if (!items.length) return toast("請先輸入班別名稱");
   $("#shiftBulkBtn").disabled = true;

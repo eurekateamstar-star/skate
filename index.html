@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>打卡系統</title>
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -165,16 +165,16 @@
         </div>
         <div class="card">
           <h3>批次新增班別</h3>
-          <textarea id="shiftBulk" rows="6" placeholder="每行一個班別名稱，例：&#10;迎風溜冰場(晨訓)&#10;麗小晨訓0740-0830&#10;接送車去程(1530-1600)六日&#10;名稱裡有時間（0740-0830、14:00-15:00）會自動帶入；休假類請在後面加「,休假」"></textarea>
+          <textarea id="shiftBulk" rows="6" placeholder="每行一個班別，格式：代碼,名稱,上班,下班,休息開始,休息結束（代碼、時間可省略）&#10;例：R001,迎風溜冰場(晨訓),09:00,10:30&#10;All,全日班,08:00,18:00,12:00,13:00&#10;只寫名稱也可以，名稱裡有時間（0740-0830）會自動帶入；休假類請在後面加「,休假」"></textarea>
           <div class="form-row" style="margin-top:8px">
             <button class="btn primary" id="shiftBulkBtn">批次新增</button>
             <button class="btn" id="leaveDefaultBtn">一鍵加入預設休假</button>
-            <span class="hint" style="margin:0">名稱重複的會略過；顏色依名稱自動分類，之後可刪除重建。</span>
+            <span class="hint" style="margin:0">同名班別會更新代碼與時間（保留顏色）；新班別依名稱自動配色。</span>
           </div>
         </div>
         <div class="card table-wrap">
           <table class="tbl">
-            <thead><tr><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>顏色</th><th></th></tr></thead>
+            <thead><tr><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>顏色</th><th></th></tr></thead>
             <tbody id="shiftList"></tbody>
           </table>
         </div>
@@ -239,6 +239,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=9"></script>
+<script type="module" src="app.js?v=10"></script>
 </body>
 </html>
