@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=33";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=34";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -120,6 +120,22 @@ function loading() {
 const setMsg = m => $("#authMsg").textContent = m || "";
 
 let liffReady = null, liffErr = null;
+
+// 圖文選單深層連結：?view=records 或 LIFF 的 liff.state=?view=records
+const START = (() => {
+  const p = new URLSearchParams(location.search);
+  let view = p.get("view"), mode = p.get("mode");
+  const st = p.get("liff.state");
+  if (!view && st) { const q = new URLSearchParams(st.includes("?") ? st.split("?")[1] : st); view = q.get("view"); mode = q.get("mode"); }
+  return { view, mode };
+})();
+function firstView() {
+  const v = START.view;
+  if (!v || !document.getElementById("view-" + v)) return "clock";
+  if (ADMIN_VIEWS.includes(v) && me?.role !== "admin") return "clock";
+  if (v === "mySchedule" && START.mode === "all") mySchMode = "all";
+  return v;
+}
 async function boot() {
   loading();
   liffReady = withTimeout(liff.init({ liffId: LIFF_ID }), 15000, "LINE 初始化逾時")
@@ -326,7 +342,7 @@ async function enterAppInner(user) {
       showShell();
       $("#loginView").classList.add("hidden");
       $("#appView").classList.remove("hidden");
-      showView("clock");
+      showView(firstView());
       verifyMe(user, claims.empId).then(showShell).catch(async err => {
         console.error(err);
         if (err.code === "unbound" || err.code === "permission-denied") {
@@ -341,7 +357,7 @@ async function enterAppInner(user) {
     showShell();
     $("#loginView").classList.add("hidden");
     $("#appView").classList.remove("hidden");
-    showView("clock");
+    showView(firstView());
     return true;
   } catch (err) {
     console.error(err);
