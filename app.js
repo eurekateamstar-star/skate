@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=14";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=15";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -30,6 +30,30 @@ function toast(msg) {
   t.textContent = msg; t.classList.add("show");
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2500);
 }
+// App 風格對話框（取代瀏覽器內建 confirm / alert）
+function appDialog({ title = "", message = "", buttons = [{ text: "好", value: true, style: "primary" }] }) {
+  return new Promise(resolve => {
+    const mask = $("#dlg");
+    $("#dlgTitle").textContent = title;
+    $("#dlgMsg").textContent = message;
+    $("#dlgTitle").classList.toggle("hidden", !title);
+    $("#dlgBtns").className = "dlg-btns" + (buttons.length > 2 ? " col" : "");
+    $("#dlgBtns").innerHTML = buttons.map((b, i) => `<button data-i="${i}" class="${b.style || ""}">${esc(b.text)}</button>`).join("");
+    mask.classList.remove("hidden");
+    requestAnimationFrame(() => mask.classList.add("open"));
+    $("#dlgBtns").onclick = e => {
+      const btn = e.target.closest("button[data-i]");
+      if (!btn) return;
+      mask.classList.remove("open");
+      setTimeout(() => mask.classList.add("hidden"), 180);
+      resolve(buttons[+btn.dataset.i].value);
+    };
+  });
+}
+const appConfirm = (title, message, { okText = "確定", danger = false } = {}) =>
+  appDialog({ title, message, buttons: [{ text: "取消", value: false }, { text: okText, value: true, style: danger ? "danger" : "primary" }] });
+const appAlert = (title, message) => appDialog({ title, message });
+
 function daysOfMonth(month) {
   const [y, m] = month.split("-").map(Number);
   const n = new Date(y, m, 0).getDate();
@@ -404,6 +428,7 @@ async function punch(type) {
       ts: serverTimestamp(), clientTime: now.toISOString(),
       lat: pos?.lat ?? null, lng: pos?.lng ?? null
     });
+    navigator.vibrate?.(30);
     toast(`${type === "in" ? "上班" : "下班"}打卡成功 ${hms(now)}`);
     await loadToday();
   } catch (err) {
@@ -642,16 +667,16 @@ $("#empList").onclick = async e => {
       };
       if (!data.name) return toast("姓名不可空白");
       if (id === me.id && (data.role !== "admin" || !data.active)
-        && !confirm("確定要取消自己的管理者權限或停用自己？")) return;
+        && !(await appConfirm("變更自己的權限", "確定要取消自己的管理者權限或停用自己？之後將無法進入管理功能。", { okText: "確定變更", danger: true }))) return;
       await updateDoc(doc(db, "employees", id), data);
       toast("已儲存");
     } else if (e.target.classList.contains("e-unbind")) {
-      if (!confirm(`解除「${emp.name}」的 LINE 綁定？他下次登入需要重新綁定。`)) return;
+      if (!(await appConfirm("解除 LINE 綁定", `解除「${emp.name}」的 LINE 綁定？他下次登入需要重新綁定。`, { okText: "解除綁定", danger: true }))) return;
       await updateDoc(doc(db, "employees", id), { lineUid: null, lineName: "", linePicture: "", bindFails: 0 });
       toast("已解除綁定");
       loadEmployeesView();
     } else if (e.target.classList.contains("e-del")) {
-      if (!confirm(`刪除員工「${emp.name}」？打卡紀錄會保留。`)) return;
+      if (!(await appConfirm("刪除員工", `刪除「${emp.name}」？打卡紀錄會保留。`, { okText: "刪除", danger: true }))) return;
       await deleteDoc(doc(db, "employees", id));
       toast("已刪除");
       loadEmployeesView();
@@ -695,7 +720,7 @@ $("#importBtn").onclick = async () => {
     if (n) await batch.commit();
     toast(`匯入完成：新增 ${add} 位、更新 ${upd} 位${bad.length ? `，略過 ${bad.length} 行` : ""}`);
     $("#importText").value = bad.join("\n");
-    if (bad.length) alert("以下資料格式錯誤或重複，已略過（保留在輸入框中）：\n" + bad.join("\n"));
+    if (bad.length) appAlert("部分資料已略過", "以下資料格式錯誤或重複（已保留在輸入框中）：\n" + bad.join("\n"));
     loadEmployeesView();
   } catch (err) {
     toast("匯入失敗：" + errMsg(err));
@@ -767,7 +792,7 @@ $("#shiftList").onclick = async e => {
       toast(`已儲存「${data.name}」`);
       renderShiftList();
     } else if (e.target.classList.contains("s-del")) {
-      if (!confirm(`確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`)) return;
+      if (!(await appConfirm("刪除班別", `確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`, { okText: "刪除", danger: true }))) return;
       await deleteDoc(doc(db, "shiftTypes", id));
       toast("已刪除");
       renderShiftList();
@@ -791,13 +816,13 @@ async function deleteShifts(ids) {
 $("#shDelSel").onclick = async () => {
   const ids = $$(".s-chk:checked").map(c => c.closest("tr").dataset.id);
   if (!ids.length) return toast("請先勾選要刪除的班別");
-  if (!confirm(`確定刪除勾選的 ${ids.length} 個班別？`)) return;
+  if (!(await appConfirm("刪除班別", `確定刪除勾選的 ${ids.length} 個班別？`, { okText: "刪除", danger: true }))) return;
   try { await deleteShifts(ids); } catch (err) { toast("刪除失敗：" + errMsg(err)); }
 };
 $("#shDelAll").onclick = async () => {
   await loadShiftTypes();
   if (!shiftTypes.length) return toast("目前沒有班別");
-  if (!confirm(`確定刪除全部 ${shiftTypes.length} 個班別？此動作無法復原。\n（已排入班表的班別會從班表上消失）`)) return;
+  if (!(await appConfirm("刪除全部班別", `確定刪除全部 ${shiftTypes.length} 個班別？此動作無法復原，已排入班表的班別會從班表上消失。`, { okText: "全部刪除", danger: true }))) return;
   try { await deleteShifts(shiftTypes.map(s => s.id)); } catch (err) { toast("刪除失敗：" + errMsg(err)); }
 };
 
@@ -983,6 +1008,14 @@ function renderSchedMobile(month) {
   if (cur && list.some(u => u.id === cur)) sel.value = cur;
   renderDayList(month);
 }
+function renderEmpCounts() {
+  $$("#schEmp option").forEach(o => {
+    const u = employees.find(x => x.id === o.value);
+    if (!u) return;
+    const n = Object.keys(schedMap).filter(k => k.startsWith(u.id + "_") && schedMap[k].length).length;
+    o.textContent = `${u.empNo || ""} ${u.name}（${n} 天）`;
+  });
+}
 function renderDayList(month = $("#schMonth").value) {
   const empId = $("#schEmp").value;
   if (!empId) { $("#schDays").innerHTML = `<p class="empty">尚無員工</p>`; return; }
@@ -1090,9 +1123,9 @@ $("#publishBtn").onclick = async () => {
   const month = $("#schMonth").value;
   const emps = rosterEmps();
   const msg = roster.visibility === "all"
-    ? `發布「${roster.name}」？\n發布後 ${emps.length} 位人員都可以看到全部人的班表。`
-    : `發布「${roster.name}」？\n目前權限為「僅可查看自己」，員工只會看到自己的班。`;
-  if (!confirm(msg)) return;
+    ? `發布後 ${emps.length} 位人員都可以在「我的班表」看到全部人的班表。`
+    : `目前權限為「僅可查看自己」，員工只會看到自己的班。`;
+  if (!(await appConfirm(`發布「${roster.name}」`, msg, { okText: "發布" }))) return;
   $("#publishBtn").disabled = true;
   try {
     if (roster.visibility === "all") {
@@ -1233,8 +1266,7 @@ async function setDayShift(id, on) {
   if (on && !ids.includes(id)) ids.push(id);
   if (!on) ids = ids.filter(x => x !== id);
   // 畫面若已重繪，找回對應格子
-  const cell = document.querySelector(`[data-key="${CSS.escape(dp.key)}"]`) || dp.cell;
-  await saveCell(dp.key, ids, cell);
+  await saveCell(dp.key, ids, dp.cell);
   renderDay();
 }
 $("#dayModal").onclick = e => {
@@ -1257,15 +1289,18 @@ async function saveCell(key, ids, cell) {
     }
     schedMap[key] = ids;
     markEdited();
-    if (cell?.classList.contains("day-row")) cell.querySelector(".dr-chips").innerHTML = dayChips(key);
-    else if (cell) cell.innerHTML = ids.map(id => chipHtml(id, true)).join("");
+    document.querySelectorAll(`[data-key="${CSS.escape(key)}"]`).forEach(el => {
+      if (el.classList.contains("day-row")) el.querySelector(".dr-chips").innerHTML = dayChips(key);
+      else el.innerHTML = ids.map(id => chipHtml(id, true)).join("");
+    });
+    renderEmpCounts();
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 }
 
 $("#copyPrevBtn").onclick = async () => {
   const month = $("#schMonth").value;
   const prev = prevMonth(month);
-  if (!confirm(`將 ${prev} 的班表依「星期幾」對應複製到 ${month}？（會覆蓋本月已有的同一天）`)) return;
+  if (!(await appConfirm("複製上月班表", `將 ${prev} 的班表依「星期幾」對應複製到 ${month}？本月已排的同一天會被覆蓋。`, { okText: "複製" }))) return;
   const snap = await getDocs(query(collection(db, "schedules"), where("month", "==", prev)));
   const tpl = {};
   snap.docs.map(d => d.data()).sort((a, b) => a.date.localeCompare(b.date)).forEach(s => {
