@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>打卡系統</title>
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 
@@ -173,8 +173,13 @@
           </div>
         </div>
         <div class="card table-wrap">
+          <div class="form-row" style="margin-bottom:10px">
+            <button class="btn small danger" id="shDelSel">刪除勾選</button>
+            <button class="btn small danger" id="shDelAll">全部刪除</button>
+            <span class="hint" style="margin:0" id="shCount"></span>
+          </div>
           <table class="tbl">
-            <thead><tr><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>顏色</th><th></th></tr></thead>
+            <thead><tr><th><input type="checkbox" id="shAll" title="全選"></th><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>顏色</th><th></th></tr></thead>
             <tbody id="shiftList"></tbody>
           </table>
         </div>
@@ -239,6 +244,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=10"></script>
+<script type="module" src="app.js?v=11"></script>
 </body>
 </html>

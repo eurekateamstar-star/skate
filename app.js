@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=10";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=11";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -629,6 +629,7 @@ async function renderShiftList() {
   await loadShiftTypes();
   $("#shiftList").innerHTML = shiftTypes.length ? shiftTypes.map(s => `
     <tr data-id="${s.id}">
+      <td><input type="checkbox" class="s-chk"></td>
       <td><input class="s-code" value="${esc(s.code || "")}" size="5"></td>
       <td><select class="s-cat">
         <option value="shift" ${s.cat !== "leave" ? "selected" : ""}>班別</option>
@@ -643,7 +644,9 @@ async function renderShiftList() {
         <button class="btn small primary s-save">儲存</button>
         <button class="btn small danger s-del">刪除</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="8" class="empty">尚未建立班別</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="9" class="empty">尚未建立班別</td></tr>`;
+  $("#shAll").checked = false;
+  $("#shCount").textContent = `共 ${shiftTypes.length} 個班別`;
 }
 $("#shiftForm").onsubmit = async e => {
   e.preventDefault();
@@ -690,6 +693,32 @@ $("#shiftList").onclick = async e => {
       renderShiftList();
     }
   } catch (err) { toast("操作失敗：" + errMsg(err)); }
+};
+
+// ---- 勾選刪除 / 全部刪除 ----
+$("#shAll").onchange = e => $$(".s-chk").forEach(c => c.checked = e.target.checked);
+
+async function deleteShifts(ids) {
+  let batch = writeBatch(db), n = 0;
+  for (const id of ids) {
+    batch.delete(doc(db, "shiftTypes", id));
+    if (++n >= 450) { await batch.commit(); batch = writeBatch(db); n = 0; }
+  }
+  if (n) await batch.commit();
+  toast(`已刪除 ${ids.length} 個班別`);
+  renderShiftList();
+}
+$("#shDelSel").onclick = async () => {
+  const ids = $$(".s-chk:checked").map(c => c.closest("tr").dataset.id);
+  if (!ids.length) return toast("請先勾選要刪除的班別");
+  if (!confirm(`確定刪除勾選的 ${ids.length} 個班別？`)) return;
+  try { await deleteShifts(ids); } catch (err) { toast("刪除失敗：" + errMsg(err)); }
+};
+$("#shDelAll").onclick = async () => {
+  await loadShiftTypes();
+  if (!shiftTypes.length) return toast("目前沒有班別");
+  if (!confirm(`確定刪除全部 ${shiftTypes.length} 個班別？此動作無法復原。\n（已排入班表的班別會從班表上消失）`)) return;
+  try { await deleteShifts(shiftTypes.map(s => s.id)); } catch (err) { toast("刪除失敗：" + errMsg(err)); }
 };
 
 // ---- 批次新增班別 ----
