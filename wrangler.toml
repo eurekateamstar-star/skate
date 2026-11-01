@@ -1,0 +1,10 @@
+# Cloudflare Worker 設定（連結 GitHub 自動部署用）
+name = "punch-auth"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# 保留在 Cloudflare 網頁上設定的變數，部署時不要清掉
+keep_vars = true
+
+# 只部署 Worker，不上傳網站檔案
+workers_dev = true
