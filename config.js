@@ -15,4 +15,4 @@ export const firebaseConfig = {
 export const LIFF_ID = "0000000000-xxxxxxxx";
 
 // 3. Cloudflare Worker 網址（部署 worker.js 後取得，結尾不要加 /）
-export const WORKER_URL = "https://punch-auth.你的帳號.workers.dev";
+export const WORKER_URL = "https://punch-auth.eurekateamstar.workers.dev";
