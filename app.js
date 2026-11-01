@@ -6,7 +6,7 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=3";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -80,7 +80,7 @@ const setMsg = m => $("#authMsg").textContent = m || "";
 async function boot() {
   loading();
   try {
-    await liff.init({ liffId: LIFF_ID });
+    await withTimeout(liff.init({ liffId: LIFF_ID }), 15000, "LINE 初始化逾時");
   } catch (e) {
     setMsg("LINE 初始化失敗，請確認 config.js 的 LIFF_ID：" + e.message);
     return showLogin();
@@ -94,20 +94,49 @@ async function boot() {
 
 async function callWorker(path, data = {}) {
   const idToken = liff.getIDToken();
-  if (!idToken) { liff.login({ redirectUri: redirectUri() }); throw new Error("redirect"); }
-  const r = await fetch(WORKER_URL.replace(/\/$/, "") + path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken, ...data })
-  });
-  const d = await r.json().catch(() => ({ error: "伺服器回應錯誤" }));
-  if (d.error === "invalid_token") {   // LINE 登入過期，重新登入
+  if (!idToken) {
+    if (liff.isInClient()) throw new Error("取不到 LINE 身分，請確認 LIFF 的 Scopes 有勾 openid");
+    liff.login({ redirectUri: redirectUri() }); throw new Error("redirect");
+  }
+  let r;
+  try {
+    r = await withTimeout(fetch(WORKER_URL.replace(/\/$/, "") + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken, ...data })
+    }), 15000, "連線 Worker 逾時");
+  } catch (e) {
+    throw new Error("無法連線到驗證伺服器（Worker）：" + e.message);
+  }
+  const d = await r.json().catch(() => ({ error: "伺服器回應錯誤（HTTP " + r.status + "）" }));
+  if (d.error === "invalid_token") {
+    // LINE 登入過期 → 外部瀏覽器重新登入一次；LINE App 內或已重試過就直接顯示錯誤，避免卡住
+    let retried = false;
+    try { retried = sessionStorage.getItem("lineRetry") === "1"; } catch {}
+    if (liff.isInClient() || retried) {
+      try { sessionStorage.removeItem("lineRetry"); } catch {}
+      throw new Error("LINE 身分驗證失敗。請確認 Cloudflare Worker 的變數 LINE_CHANNEL_ID 是否正確（應為 LINE Login Channel ID），設定後要重新部署。");
+    }
+    try { sessionStorage.setItem("lineRetry", "1"); } catch {}
     liff.logout();
     liff.login({ redirectUri: redirectUri() });
     throw new Error("redirect");
   }
+  try { sessionStorage.removeItem("lineRetry"); } catch {}
+  if (d.error === "server_error") throw new Error("Worker 錯誤：" + (d.message || "") + "（請檢查 Worker 變數設定）");
   return d;
 }
+
+function withTimeout(p, ms, msg) {
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+}
+
+// 任何未預期的錯誤都顯示出來，不要卡在「載入中」
+function showFatal(e) {
+  if (!me) { setMsg("發生錯誤：" + (e?.message || e)); showLogin(); }
+}
+window.addEventListener("error", e => showFatal(e.error || e.message));
+window.addEventListener("unhandledrejection", e => showFatal(e.reason));
 
 let picked = null;
 
@@ -133,9 +162,15 @@ async function lineAuth() {
 }
 
 async function finishLogin(token) {
-  const cred = await signInWithCustomToken(auth, token);
+  let cred;
+  try {
+    cred = await signInWithCustomToken(auth, token);
+  } catch (e) {
+    setMsg("Firebase 登入失敗：" + (e.code || e.message) + "（請確認 Authentication 已啟用、Worker 的服務帳戶變數正確）");
+    return showLogin();
+  }
   if (!await enterApp(cred.user)) {
-    setMsg("找不到員工資料或帳號已停用");
+    if (!$("#authMsg").textContent) setMsg("找不到員工資料或帳號已停用");
     showLogin();
   }
 }
@@ -207,6 +242,7 @@ async function enterApp(user) {
     return true;
   } catch (err) {
     console.error(err);
+    setMsg("讀取員工資料失敗：" + errMsg(err) + "（請確認 firestore.rules 已發布）");
     await signOut(auth);   // 例如被解除綁定 → 讀取被拒
     return false;
   }
