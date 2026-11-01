@@ -45,6 +45,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 薪資：只有管理者能讀寫
+    match /payRates/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /payroll/{month} {
+      allow read, write: if isAdmin();
+    }
+
     // 打卡地點：已綁定員工可讀，管理者可改
     match /locations/{id} {
       allow read: if bound();

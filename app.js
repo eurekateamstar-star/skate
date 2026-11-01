@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=31";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=32";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -360,13 +360,14 @@ const loaders = {
   employees: loadEmployeesView,
   shifts: renderShiftList,
   scheduling: loadSchedulingView,
-  report: loadReport
+  report: loadReport,
+  payroll: loadPayroll
 };
 const TITLES = {
   clock: "打卡", records: "出勤紀錄", mySchedule: "我的班表", scheduling: "排班作業",
-  report: "出勤報表", employees: "員工管理", shifts: "班別設定"
+  report: "出勤報表", employees: "員工管理", shifts: "班別設定", payroll: "薪資計算"
 };
-const ADMIN_VIEWS = ["scheduling", "report", "employees", "shifts"];
+const ADMIN_VIEWS = ["scheduling", "report", "payroll", "employees", "shifts"];
 function showView(name) {
   $$(".view").forEach(v => v.classList.add("hidden"));
   $(`#view-${name}`).classList.remove("hidden");
@@ -401,7 +402,7 @@ new MutationObserver(muts => {
 }).observe(document.body, { childList: true, subtree: true });
 
 const thisMonth = ym(new Date());
-["#recMonth", "#mySchMonth", "#schMonth", "#repMonth"].forEach(s => $(s).value = thisMonth);
+["#recMonth", "#mySchMonth", "#schMonth", "#repMonth", "#payMonth"].forEach(s => $(s).value = thisMonth);
 $("#recMonth").onchange = () => loadRecords();
 $("#mySchMonth").onchange = () => loadMySchedule();
 $("#schMonth").onchange = () => loadScheduling();
@@ -2122,6 +2123,274 @@ $("#csvBtn").onclick = () => {
   a.download = `打卡紀錄_${$("#repMonth").value}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
+};
+
+/* ================= 薪資計算（管理者） ================= */
+const ST = { ok: "正常", forgot: "忘記打卡", missing: "未打卡", leave: "請假", absent: "未上班" };
+let pay = { month: null, rates: {}, cfg: {}, items: [], open: new Set(), tab: "month" };
+const normName = s => String(s || "").replace(/\s+/g, "").toLowerCase();
+
+async function loadPayRates() {
+  const d = await getDoc(doc(db, "payRates", "all"));
+  pay.rates = d.exists() ? d.data().rates || {} : {};
+}
+const rateOf = (empId, sid) => +(pay.rates[empId]?.[sid] || 0);
+
+async function loadPayroll() {
+  const month = $("#payMonth").value;
+  await Promise.all([loadEmployees(), loadShiftTypes(), loadPayRates()]);
+  $("#payMonthView").classList.toggle("hidden", pay.tab !== "month");
+  $("#payRatesView").classList.toggle("hidden", pay.tab !== "rates");
+  $$("#payTab button").forEach(b => b.classList.toggle("on", b.dataset.v === pay.tab));
+  $("#payMonth").classList.toggle("hidden", pay.tab !== "month");
+  if (pay.tab === "rates") return renderRates();
+
+  const [attSnap, schSnap, cfgSnap] = await Promise.all([
+    getDocs(query(collection(db, "attendance"), where("month", "==", month))),
+    getDocs(query(collection(db, "schedules"), where("month", "==", month))),
+    getDoc(doc(db, "payroll", month))
+  ]);
+  pay.month = month;
+  pay.cfg = { empIds: null, overrides: {}, adjust: {}, payForgot: true, payMissing: false, ...(cfgSnap.exists() ? cfgSnap.data() : {}) };
+  $("#payForgot").checked = pay.cfg.payForgot !== false;
+  $("#payMissing").checked = !!pay.cfg.payMissing;
+
+  // 每一個「人 × 日期 × 班別」是一堂
+  const recs = attSnap.docs.map(toRec);
+  const byKey = {};
+  recs.forEach(r => (byKey[`${r.empId}_${r.date}_${r.shiftId || "x:" + (r.shiftName || "")}`] ??= []).push(r));
+  const today = ymd(new Date());
+  const items = [], seen = new Set();
+  schSnap.forEach(d => {
+    const x = d.data();
+    (x.shiftIds || []).forEach(sid => {
+      const k = `${x.empId}_${x.date}_${sid}`;
+      seen.add(k);
+      items.push({ key: k, empId: x.empId, date: x.date, sid, recs: byKey[k] || [] });
+    });
+  });
+  // 沒排班但有打卡的班（臨時班別）
+  Object.entries(byKey).forEach(([k, list]) => {
+    if (seen.has(k)) return;
+    const r = list[0];
+    items.push({ key: k, empId: r.empId, date: r.date, sid: r.shiftId || null, sname: r.shiftName, recs: list, extra: true });
+  });
+  pay.items = items.map(it => {
+    const s = shiftMap[it.sid];
+    const hasIn = it.recs.some(r => r.type === "in"), hasOut = it.recs.some(r => r.type === "out");
+    let auto = s?.cat === "leave" || /假/.test(s?.name || it.sname || "") ? "leave"
+      : hasIn && hasOut ? "ok" : hasIn || hasOut ? "forgot"
+      : it.date < today ? "missing" : "future";
+    const st = pay.cfg.overrides[it.key] || auto;
+    return { ...it, s, name: s?.name || it.sname || "未指定班別", auto, st, hasIn, hasOut };
+  }).filter(it => it.st !== "future").sort((a, b) => a.date.localeCompare(b.date) || (a.s?.start || "").localeCompare(b.s?.start || ""));
+
+  renderPayEmps();
+  renderPayroll();
+}
+
+const paid = st => st === "ok" || (st === "forgot" && pay.cfg.payForgot !== false) || (st === "missing" && pay.cfg.payMissing);
+const selectedEmps = () => {
+  const act = activeEmployees();
+  const ids = pay.cfg.empIds;
+  return ids ? act.filter(u => ids.includes(u.id)) : act.filter(u => pay.items.some(it => it.empId === u.id));
+};
+
+function renderPayEmps() {
+  const sel = new Set(selectedEmps().map(u => u.id));
+  $("#payEmps").innerHTML = activeEmployees().map(u => {
+    const n = pay.items.filter(it => it.empId === u.id).length;
+    return `<button class="emp-chip ${sel.has(u.id) ? "on" : ""}" data-eid="${u.id}">${esc(u.name)}<small>${n ? n + " 堂" : "無排班"}</small></button>`;
+  }).join("");
+}
+
+function calcEmp(u) {
+  const list = pay.items.filter(it => it.empId === u.id);
+  const by = {};
+  list.forEach(it => {
+    const k = it.sid || "x:" + it.name;
+    const g = by[k] ??= { sid: it.sid, name: it.name, color: it.s?.color || "#9aa0a6", rate: it.sid ? rateOf(u.id, it.sid) : 0, n: { ok: 0, forgot: 0, missing: 0, leave: 0, absent: 0 }, paidN: 0 };
+    g.n[it.st] = (g.n[it.st] || 0) + 1;
+    if (paid(it.st)) g.paidN++;
+  });
+  const groups = Object.values(by).map(g => ({ ...g, sub: g.paidN * g.rate }))
+    .sort((a, b) => (shiftMap[a.sid]?.order || 9e15) - (shiftMap[b.sid]?.order || 9e15));
+  const cnt = st => list.filter(it => it.st === st).length;
+  const adj = pay.cfg.adjust[u.id] || {};
+  const base = groups.reduce((a, g) => a + g.sub, 0);
+  const total = base + (+adj.bonus || 0) - (+adj.deduct || 0);
+  return { u, list, groups, base, adj, total, ok: cnt("ok"), forgot: cnt("forgot"), missing: cnt("missing"), leave: cnt("leave") + cnt("absent"), paidN: groups.reduce((a, g) => a + g.paidN, 0), noRate: groups.filter(g => g.paidN && !g.rate).length };
+}
+
+const money = n => "$" + Math.round(n).toLocaleString("en-US");
+
+function renderPayroll() {
+  const stF = $("#payStatus").value;
+  const rows = selectedEmps().map(calcEmp).filter(c => !stF || c.list.some(it => it.st === stF || (stF === "leave" && it.st === "absent")));
+  const sum = rows.reduce((a, c) => a + c.total, 0);
+  const [y, m] = pay.month.split("-");
+  $("#payTotal").innerHTML = `<div><span>${y}年${+m}月 應發總額</span><b>${money(sum)}</b></div>
+    <div><span>人數</span><b>${rows.length}</b></div>
+    <div><span>計薪堂數</span><b>${rows.reduce((a, c) => a + c.paidN, 0)}</b></div>
+    <div><span>忘記打卡</span><b class="${rows.some(c => c.forgot) ? "orange" : ""}">${rows.reduce((a, c) => a + c.forgot, 0)}</b></div>
+    <div><span>未打卡</span><b class="${rows.some(c => c.missing) ? "red" : ""}">${rows.reduce((a, c) => a + c.missing, 0)}</b></div>`;
+
+  $("#payList").innerHTML = rows.map(c => {
+    const open = pay.open.has(c.u.id);
+    const tags = [c.forgot ? `<span class="tag warn">忘記打卡 ${c.forgot}</span>` : "", c.missing ? `<span class="tag bad">未打卡 ${c.missing}</span>` : "",
+      c.leave ? `<span class="tag">請假/未上班 ${c.leave}</span>` : "", c.noRate ? `<span class="tag bad">${c.noRate} 個班別沒設單價</span>` : ""].join("");
+    let detail = "";
+    if (open) {
+      const inst = c.list.filter(it => !stF || it.st === stF || (stF === "leave" && it.st === "absent"));
+      detail = `<div class="pay-detail">
+        <table class="pay-tbl"><thead><tr><th>班別</th><th>正常</th><th>忘記打卡</th><th>未打卡</th><th>請假</th><th>計薪次數</th><th>單價</th><th>小計</th></tr></thead><tbody>
+        ${c.groups.map(g => `<tr><td><span class="dot" style="background:${esc(g.color)}"></span>${esc(g.name)}</td>
+          <td>${g.n.ok || ""}</td><td class="o">${g.n.forgot || ""}</td><td class="r">${g.n.missing || ""}</td><td>${(g.n.leave || 0) + (g.n.absent || 0) || ""}</td>
+          <td><b>${g.paidN}</b></td><td class="${g.paidN && !g.rate ? "r" : ""}">${g.rate ? money(g.rate) : "未設定"}</td><td><b>${money(g.sub)}</b></td></tr>`).join("")}
+        </tbody></table>
+        <div class="pay-adj">
+          <label>加給<input type="number" data-adj="bonus" value="${c.adj.bonus || ""}" placeholder="0"></label>
+          <label>扣款<input type="number" data-adj="deduct" value="${c.adj.deduct || ""}" placeholder="0"></label>
+          <label class="grow">備註<input data-adj="note" value="${esc(c.adj.note || "")}" placeholder="例：交通補貼、獎金"></label>
+        </div>
+        <div class="inst-head">每堂明細 <span>（可手動改狀態，例如補請假）</span></div>
+        <div class="inst-list">${inst.map(it => `<div class="inst">
+          <span class="inst-date">${dayLabel(it.date)}</span>
+          <span class="dot" style="background:${esc(it.s?.color || "#9aa0a6")}"></span><span class="inst-name">${esc(it.name)}</span>
+          <span class="inst-punch">${it.hasIn ? "上✓" : "上✗"} ${it.hasOut ? "下✓" : "下✗"}</span>
+          <select data-ov="${esc(it.key)}" class="st-${it.st}">${Object.entries(ST).map(([k, v]) => `<option value="${k}" ${it.st === k ? "selected" : ""}>${v}${it.auto === k ? "（系統）" : ""}</option>`).join("")}</select>
+        </div>`).join("") || `<p class="empty">沒有符合的紀錄</p>`}</div>
+      </div>`;
+    }
+    return `<div class="card pay-card ${open ? "open" : ""}" data-eid="${c.u.id}">
+      <div class="pay-head" data-toggle>
+        <div class="ph-name"><b>${esc(c.u.name)}</b><span>${esc(c.u.empNo || "")}・計薪 ${c.paidN} 堂</span></div>
+        <div class="ph-tags">${tags}</div>
+        <div class="ph-total">${money(c.total)}${c.adj.bonus || c.adj.deduct ? `<small>課堂 ${money(c.base)}</small>` : ""}</div>
+        <span class="chev"></span>
+      </div>${detail}
+    </div>`;
+  }).join("") || `<div class="card empty-card">沒有符合的人員</div>`;
+}
+
+let payCfgTimer = null;
+function savePayCfg(patch) {
+  Object.assign(pay.cfg, patch);
+  clearTimeout(payCfgTimer);
+  payCfgTimer = setTimeout(() => setDoc(doc(db, "payroll", pay.month), pay.cfg, { merge: true })
+    .catch(err => toast("儲存失敗：" + errMsg(err) + "（請確認 firestore.rules 已更新）")), 500);
+}
+
+$("#payTab").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { pay.tab = b.dataset.v; loadPayroll(); } };
+$("#payMonth").onchange = () => { pay.open.clear(); loadPayroll(); };
+$("#payStatus").onchange = renderPayroll;
+$("#payForgot").onchange = e => { savePayCfg({ payForgot: e.target.checked }); renderPayroll(); };
+$("#payMissing").onchange = e => { savePayCfg({ payMissing: e.target.checked }); renderPayroll(); };
+$("#payEmps").onclick = e => {
+  const b = e.target.closest(".emp-chip");
+  if (!b) return;
+  const set = new Set(selectedEmps().map(u => u.id));
+  set.has(b.dataset.eid) ? set.delete(b.dataset.eid) : set.add(b.dataset.eid);
+  savePayCfg({ empIds: [...set] });
+  renderPayEmps(); renderPayroll();
+};
+$("#payEmpAll").onclick = () => { savePayCfg({ empIds: activeEmployees().map(u => u.id) }); renderPayEmps(); renderPayroll(); };
+$("#payEmpNone").onclick = () => { savePayCfg({ empIds: [] }); renderPayEmps(); renderPayroll(); };
+$("#payList").onclick = e => {
+  if (!e.target.closest("[data-toggle]")) return;
+  const id = e.target.closest(".pay-card").dataset.eid;
+  pay.open.has(id) ? pay.open.delete(id) : pay.open.add(id);
+  renderPayroll();
+};
+$("#payList").onchange = e => {
+  const card = e.target.closest(".pay-card");
+  if (e.target.dataset.ov) {
+    const it = pay.items.find(x => x.key === e.target.dataset.ov);
+    const ov = { ...pay.cfg.overrides };
+    if (e.target.value === it.auto) delete ov[it.key]; else ov[it.key] = e.target.value;
+    it.st = e.target.value;
+    savePayCfg({ overrides: ov });
+    renderPayroll();
+  } else if (e.target.dataset.adj) {
+    const id = card.dataset.eid;
+    const adjust = { ...pay.cfg.adjust, [id]: { ...(pay.cfg.adjust[id] || {}), [e.target.dataset.adj]: e.target.type === "number" ? (+e.target.value || 0) : e.target.value } };
+    savePayCfg({ adjust });
+    renderPayroll();
+  }
+};
+
+$("#payCsv").onclick = () => {
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [["員編", "姓名", "班別", "正常", "忘記打卡", "未打卡", "請假/未上班", "計薪次數", "單價", "小計"].map(q).join(",")];
+  selectedEmps().map(calcEmp).forEach(c => {
+    c.groups.forEach(g => lines.push([c.u.empNo, c.u.name, g.name, g.n.ok, g.n.forgot, g.n.missing, (g.n.leave || 0) + (g.n.absent || 0), g.paidN, g.rate, g.sub].map(q).join(",")));
+    if (c.adj.bonus) lines.push([c.u.empNo, c.u.name, "加給", "", "", "", "", "", "", c.adj.bonus].map(q).join(","));
+    if (c.adj.deduct) lines.push([c.u.empNo, c.u.name, "扣款", "", "", "", "", "", "", -c.adj.deduct].map(q).join(","));
+    lines.push([c.u.empNo, c.u.name, "合計" + (c.adj.note ? `（${c.adj.note}）` : ""), c.ok, c.forgot, c.missing, c.leave, c.paidN, "", c.total].map(q).join(","));
+  });
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `薪資_${pay.month}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// ---- 薪資標準（單價表）----
+function renderRates() {
+  const emps = activeEmployees();
+  const shifts = shiftTypes.filter(s => s.cat !== "leave");
+  $("#rateTbl").innerHTML = `<thead><tr><th class="rc">班別</th>${emps.map(u => `<th>${esc(u.name)}<small>${esc(u.empNo || "")}</small></th>`).join("")}</tr></thead>
+    <tbody>${shifts.map(s => `<tr><th class="rc"><span class="dot" style="background:${esc(s.color)}"></span>${esc(s.name)}</th>${emps.map(u =>
+      `<td><input type="number" min="0" step="50" data-e="${u.id}" data-s="${s.id}" value="${pay.rates[u.id]?.[s.id] || ""}"></td>`).join("")}</tr>`).join("")}</tbody>`;
+}
+$("#rateSave").onclick = async () => {
+  const rates = {};
+  $$("#rateTbl input").forEach(i => { const v = +i.value; if (v > 0) (rates[i.dataset.e] ??= {})[i.dataset.s] = v; });
+  try {
+    await setDoc(doc(db, "payRates", "all"), { rates, updatedAt: serverTimestamp() });
+    pay.rates = rates;
+    toast("薪資標準已儲存");
+  } catch (err) { appAlert("儲存失敗", errMsg(err) + "\n請確認 firestore.rules 已更新為最新版。"); }
+};
+$("#rateImportBtn").onclick = () => $("#rateXlsx").click();
+$("#rateXlsx").onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
+    const wb = XLSX.read(await file.arrayBuffer());
+    const name = wb.SheetNames.find(n => n.includes("薪資標準"));
+    if (!name) return appAlert("找不到工作表", "檔案中需要有「薪資標準」工作表（第一列是人名，其中一欄是班別名稱）。");
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
+    // 找出人名列與班別欄
+    const empBy = {}; employees.forEach(u => empBy[normName(u.name)] = u);
+    let hr = rows.findIndex(r => r.filter(v => empBy[normName(v)]).length >= 3);
+    if (hr < 0) return appAlert("找不到人名", "第一列需要是員工姓名。");
+    const head = rows[hr];
+    const cols = head.map((v, i) => ({ i, u: empBy[normName(v)] })).filter(x => x.u && x.i > 2);
+    const shiftBy = {}; shiftTypes.forEach(s => shiftBy[normName(s.name)] = s);
+    const loose = n => normName(n).replace(/[\d:：\-~]/g, "");
+    const findShift = n => {
+      if (shiftBy[normName(n)]) return shiftBy[normName(n)];
+      const c = shiftTypes.filter(s => loose(s.name) === loose(n));
+      return c.length === 1 ? c[0] : null;
+    };
+    const firstCol = Math.min(...cols.map(c => c.i));
+    let n = 0; const miss = [];
+    const rates = JSON.parse(JSON.stringify(pay.rates));
+    rows.slice(hr + 1).forEach(r => {
+      const label = [...r.slice(0, firstCol)].reverse().find(v => String(v).trim());
+      if (!label) return;
+      const s = findShift(label);
+      if (!s) { if (cols.some(c => +r[c.i] > 0)) miss.push(String(label).trim()); return; }
+      cols.forEach(c => { const v = +r[c.i]; if (v > 0) { (rates[c.u.id] ??= {})[s.id] = v; n++; } });
+    });
+    pay.rates = rates;
+    renderRates();
+    appAlert("已讀入單價", `讀入 ${n} 個單價（${cols.length} 位員工）。` + (miss.length ? `\n對不到的班別：${miss.join("、")}` : "") + "\n確認無誤後請按「儲存」。");
+  } catch (err) { appAlert("匯入失敗", err.message || String(err)); }
 };
 
 /* ================= 匯入舊系統打卡紀錄 Excel（管理者） ================= */

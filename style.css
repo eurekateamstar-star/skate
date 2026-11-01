@@ -316,6 +316,77 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .rep-tbl td.wrap{white-space:normal;min-width:140px;max-width:220px}
 .rep-tbl tr.abn td:first-child{box-shadow:inset 3px 0 0 var(--red)}
 
+/* ---------- 薪資計算 ---------- */
+.pay-filter{padding:16px 20px}
+.pf-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pf-row + .pf-row,.emp-chips + .pf-row{margin-top:12px}
+.pf-label{font-weight:600;font-size:14px;flex:1}
+.pf-actions{display:flex;gap:6px;align-items:center}
+.pf-opts{gap:18px}
+.emp-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.emp-chip{border:1px solid var(--sep);background:#fff;border-radius:980px;padding:6px 12px;font:500 13.5px var(--font);color:var(--text-2);cursor:pointer;display:inline-flex;align-items:baseline;gap:6px;transition:all .15s}
+.emp-chip small{font-size:11.5px;color:var(--muted);font-weight:400}
+.emp-chip.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.emp-chip.on small{color:rgba(255,255,255,.8)}
+.sw{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--text-2);cursor:pointer}
+.sw input{display:none}
+.sw span{width:38px;height:22px;border-radius:11px;background:var(--fill-2);position:relative;transition:background .2s;flex-shrink:0}
+.sw span::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform .2s}
+.sw input:checked + span{background:var(--green)}
+.sw input:checked + span::after{transform:translateX(16px)}
+.pay-total{display:grid;grid-template-columns:2fr repeat(4,1fr);gap:12px;margin-bottom:16px}
+.pay-total div{background:#fff;border-radius:var(--radius);padding:14px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column}
+.pay-total span{font-size:12.5px;color:var(--muted)}
+.pay-total b{font-size:24px;font-weight:600;letter-spacing:-.02em}
+.pay-total div:first-child b{font-size:30px;color:var(--primary)}
+.pay-total b.red{color:var(--red)}
+.pay-total b.orange{color:var(--orange-d)}
+.pay-card{padding:0;overflow:hidden;margin-bottom:10px}
+.pay-head{display:flex;align-items:center;gap:14px;padding:14px 20px;cursor:pointer}
+.pay-head:hover{background:rgba(0,0,0,.015)}
+.ph-name{display:flex;flex-direction:column;min-width:120px}
+.ph-name b{font-size:16px;font-weight:600}
+.ph-name span{font-size:12.5px;color:var(--muted)}
+.ph-tags{flex:1;display:flex;flex-wrap:wrap;gap:4px}
+.ph-total{font-size:20px;font-weight:600;text-align:right;display:flex;flex-direction:column;font-variant-numeric:tabular-nums}
+.ph-total small{font-size:11.5px;color:var(--muted);font-weight:400}
+.chev{width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .2s;margin-left:4px}
+.pay-card.open .chev{transform:rotate(-135deg)}
+.pay-detail{padding:4px 20px 20px;border-top:1px solid var(--sep-2)}
+.pay-tbl{width:100%;border-collapse:collapse;margin-top:8px}
+.pay-tbl th,.pay-tbl td{padding:9px 8px;text-align:right;border-bottom:1px solid var(--sep-2);font-size:13.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pay-tbl th{font-size:12px;color:var(--muted);font-weight:600}
+.pay-tbl th:first-child,.pay-tbl td:first-child{text-align:left;white-space:normal}
+.pay-tbl td:first-child .dot{display:inline-block;margin-right:6px;vertical-align:1px}
+.pay-tbl td.o{color:var(--orange-d)}
+.pay-tbl td.r{color:var(--red)}
+.pay-adj{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 6px}
+.pay-adj label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2)}
+.pay-adj label input{width:110px}
+.pay-adj label.grow{flex:1;min-width:200px}
+.pay-adj label.grow input{width:100%}
+.inst-head{font-weight:600;font-size:13.5px;margin:16px 0 6px}
+.inst-head span{font-weight:400;color:var(--muted);font-size:12.5px}
+.inst-list{max-height:360px;overflow-y:auto;border:1px solid var(--sep-2);border-radius:12px}
+.inst{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--sep-2);font-size:13.5px}
+.inst:last-child{border-bottom:0}
+.inst-date{width:78px;flex-shrink:0;color:var(--text-2)}
+.inst-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inst-punch{font-size:12px;color:var(--muted);white-space:nowrap}
+.inst select{height:30px;font-size:13px;width:118px}
+.inst select.st-ok{color:var(--green-d)}
+.inst select.st-forgot{color:var(--orange-d)}
+.inst select.st-missing{color:var(--red)}
+.rate-wrap{overflow:auto;max-height:70vh;margin-top:12px;border:1px solid var(--sep-2);border-radius:12px}
+.rate-tbl{border-collapse:separate;border-spacing:0}
+.rate-tbl th,.rate-tbl td{padding:5px;border-bottom:1px solid var(--sep-2);border-right:1px solid var(--sep-2);font-size:13px;white-space:nowrap}
+.rate-tbl thead th{position:sticky;top:0;background:#f9f9fb;z-index:2;font-weight:600;text-align:center;padding:8px 6px}
+.rate-tbl thead th small{display:block;font-weight:400;color:var(--muted);font-size:11px}
+.rate-tbl .rc{position:sticky;left:0;background:#fff;z-index:1;text-align:left;font-weight:500;min-width:200px;padding:5px 10px}
+.rate-tbl thead .rc{z-index:3;background:#f9f9fb}
+.rate-tbl .rc .dot{display:inline-block;margin-right:6px;vertical-align:1px}
+.rate-tbl input{width:72px;height:30px;padding:0 6px;text-align:right;font-size:13px}
+
 /* ---------- 打卡地點管理 ---------- */
 .radius-in{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px}
 .radius-in input{width:80px}
@@ -558,6 +629,21 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
   .rep-tbl td.g-in,.rep-tbl td.g-out{background:none}
   .rep-tbl td.wrap{max-width:none}
   .rep-filter select{flex:1}
+
+  .pay-total{grid-template-columns:repeat(2,1fr)}
+  .pay-total div:first-child{grid-column:1/-1}
+  .pay-head{flex-wrap:wrap;padding:14px 16px}
+  .ph-tags{order:3;flex-basis:100%}
+  .ph-total{margin-left:auto}
+  .pay-detail{padding:4px 12px 16px}
+  .pay-tbl th:nth-child(n+2):nth-child(-n+5),.pay-tbl td:nth-child(n+2):nth-child(-n+5){display:none}
+  .pay-adj label{flex:1 1 40%}
+  .pay-adj label input{width:100%}
+  .pay-tbl th,.pay-tbl td{padding:8px 4px;font-size:12.5px}
+  .inst{flex-wrap:wrap}
+  .inst-name{flex-basis:calc(100% - 100px)}
+  .inst select{margin-left:auto}
+  .sheet-grid{grid-template-columns:repeat(3,1fr)}
 
   /* 視窗 → 全螢幕抽屜 */
   .modal-mask{padding:0;align-items:flex-end}

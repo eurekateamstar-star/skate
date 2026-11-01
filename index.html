@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=31">
+  <link rel="stylesheet" href="style.css?v=32">
 </head>
 <body>
 
@@ -33,6 +33,7 @@
     <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
     <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
     <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></symbol>
+    <symbol id="i-money" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 10v.01M18 14v.01"/></symbol>
     <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></symbol>
     <symbol id="i-apps" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
     <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
@@ -95,6 +96,7 @@
         <div class="nav-title">管理者專區</div>
         <a data-view="scheduling"><svg class="ic"><use href="#i-grid"/></svg>排班作業</a>
         <a data-view="report"><svg class="ic"><use href="#i-chart"/></svg>出勤報表</a>
+        <a data-view="payroll"><svg class="ic"><use href="#i-money"/></svg>薪資計算</a>
         <a data-view="employees"><svg class="ic"><use href="#i-users"/></svg>員工管理</a>
         <a data-view="shifts"><svg class="ic"><use href="#i-tag"/></svg>班別設定</a>
       </div>
@@ -278,6 +280,63 @@
         </div>
       </section>
 
+      <!-- 薪資計算 -->
+      <section id="view-payroll" class="view hidden">
+        <div class="view-head">
+          <div class="vh-title">
+            <h2>薪資計算</h2>
+            <div class="vh-sub" id="paySub">依排班與打卡，自動計算每個人的堂數與薪資</div>
+          </div>
+          <div class="vh-actions">
+            <div class="seg" id="payTab"><button data-v="month" class="on">當月薪資</button><button data-v="rates">薪資標準</button></div>
+            <input type="month" id="payMonth">
+          </div>
+        </div>
+
+        <!-- 當月薪資 -->
+        <div id="payMonthView">
+          <div class="card pay-filter">
+            <div class="pf-row">
+              <span class="pf-label">計薪人員</span>
+              <div class="pf-actions"><button class="btn link" id="payEmpAll">全選</button><button class="btn link" id="payEmpNone">清除</button></div>
+            </div>
+            <div class="emp-chips" id="payEmps"></div>
+            <div class="pf-row pf-opts">
+              <label class="sw"><input type="checkbox" id="payForgot" checked><span></span>忘記打卡（只打上班或下班）照算薪資</label>
+              <label class="sw"><input type="checkbox" id="payMissing"><span></span>未打卡（上下班都沒打）照算薪資</label>
+            </div>
+            <div class="pf-row">
+              <select id="payStatus">
+                <option value="">全部狀態</option>
+                <option value="ok">正常</option>
+                <option value="forgot">忘記打卡</option>
+                <option value="missing">未打卡</option>
+                <option value="leave">請假</option>
+              </select>
+              <button class="btn" id="payCsv">匯出 CSV</button>
+            </div>
+          </div>
+          <div class="pay-total" id="payTotal"></div>
+          <div id="payList"></div>
+        </div>
+
+        <!-- 薪資標準 -->
+        <div id="payRatesView" class="hidden">
+          <div class="card">
+            <div class="pf-row">
+              <span class="pf-label">每個人每個班別的課堂單價（元／堂）</span>
+              <div class="pf-actions">
+                <button class="btn" id="rateImportBtn">從 Excel 匯入</button>
+                <input type="file" id="rateXlsx" accept=".xlsx,.xls" hidden>
+                <button class="btn primary" id="rateSave">儲存</button>
+              </div>
+            </div>
+            <p class="hint">空白 = 0 元。可直接從原本的薪資 Excel（「薪資標準」工作表）匯入。</p>
+            <div class="rate-wrap"><table class="rate-tbl" id="rateTbl"></table></div>
+          </div>
+        </div>
+      </section>
+
       <!-- 員工管理 -->
       <section id="view-employees" class="view hidden">
         <div class="view-head"><h2>員工管理</h2></div>
@@ -393,6 +452,7 @@
     <div class="sheet-grid">
       <a data-view="scheduling"><svg class="ic"><use href="#i-grid"/></svg>排班作業</a>
       <a data-view="report"><svg class="ic"><use href="#i-chart"/></svg>出勤報表</a>
+      <a data-view="payroll"><svg class="ic"><use href="#i-money"/></svg>薪資計算</a>
       <a data-view="employees"><svg class="ic"><use href="#i-users"/></svg>員工管理</a>
       <a data-view="shifts"><svg class="ic"><use href="#i-tag"/></svg>班別設定</a>
     </div>
@@ -497,6 +557,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=31"></script>
+<script type="module" src="app.js?v=32"></script>
 </body>
 </html>
