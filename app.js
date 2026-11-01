@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=25";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=26";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -484,7 +484,7 @@ function rangeCheck(loc) {
   if (!geo.pos) return { ok: false, cls: "wait", text: `${loc.name}・定位中…` };
   const d = Math.round(distM(geo.pos, loc));
   const ok = d <= (loc.radius || 50) + Math.min(geo.acc || 0, 20);
-  return { ok, cls: ok ? "ok" : "far", d, text: ok ? `${loc.name}・距離 ${d} 公尺，可以打卡` : `${loc.name}・距離 ${d} 公尺（需在 ${loc.radius || 50} 公尺內）` };
+  return { ok, cls: ok ? "ok" : "far", d, text: ok ? `${loc.name}・距離 ${d} 公尺，可以打卡` : `${loc.name}・距離 ${d} 公尺，超出範圍（打卡需填原因）` };
 }
 
 // ---- 地圖（Leaflet）----
@@ -554,8 +554,8 @@ function renderPunchCards() {
     const inR = recs.filter(r => r.type === "in")[0];
     const outR = recs.filter(r => r.type === "out").at(-1);
     const chkOf = { in: chkIn, out: chkOut };
-    const btn = (type, r, label) => `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}" ${chkOf[type].ok ? "" : "disabled"}>
-      <span>${label}</span>${r ? `<small>已打 ${hm(r.t)}</small>` : ""}</button>`;
+    const btn = (type, r, label) => `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}" ${chkOf[type].cls === "wait" ? "disabled" : ""}>
+      <span>${label}</span>${r ? `<small>已打 ${hm(r.t)}${r.outOfRange ? "・範圍外" : ""}</small>` : ""}</button>`;
     const locLine = (chk, prefix) => `<div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(chk.text)}</div>`;
     // 上下班地點不同：先打上班顯示上班地點；打完上班改顯示下班地點
     const locHtml = !two ? locLine(chkIn) : inR ? locLine(chkOut, "下班") + `<div class="pc-loc done"><b>上班</b>${esc(inLoc?.name || "不限地點")}・已打卡</div>` : locLine(chkIn, "上班") + locLine(chkOut, "下班");
@@ -605,7 +605,18 @@ async function punch(type, sid) {
   const s = shiftMap[sid];
   const loc = locFor(s, type);
   const chk = rangeCheck(loc);
-  if (!chk.ok) return appAlert("無法打卡", chk.text);
+  let reason = "";
+  if (!chk.ok) {
+    const where = chk.d != null ? `你目前距離「${loc.name}」約 ${chk.d} 公尺，超出 ${loc.radius || 50} 公尺打卡範圍。` : `${chk.text}`;
+    reason = await appDialog({
+      title: "不在打卡範圍內", message: `${where}\n仍要打卡請填寫原因，管理者會看到。`,
+      input: { type: "text", placeholder: "例：在校門口等學生、臨時改地點" },
+      buttons: [{ text: "取消", value: false }, { text: "送出打卡", value: true, style: "primary" }]
+    });
+    if (reason === false) return;
+    reason = String(reason || "").trim();
+    if (reason.length < 2) return appAlert("請填寫原因", "範圍外打卡需要填寫原因（至少 2 個字）。");
+  }
   const done = todayRecs.some(r => r.shiftId === sid && r.type === type);
   if (done && !(await appConfirm("重複打卡", `「${s.name}」已經打過${type === "in" ? "上班" : "下班"}卡，要再打一次嗎？`, { okText: "再打一次" }))) return;
   if (type === "out" && !todayRecs.some(r => r.shiftId === sid && r.type === "in") &&
@@ -619,10 +630,11 @@ async function punch(type, sid) {
       locationId: loc?.id || null, dist: chk.d ?? null,
       date: ymd(now), month: ym(now),
       ts: serverTimestamp(), clientTime: now.toISOString(),
-      lat: geo.pos?.lat ?? null, lng: geo.pos?.lng ?? null, acc: geo.acc ?? null
+      lat: geo.pos?.lat ?? null, lng: geo.pos?.lng ?? null, acc: geo.acc ?? null,
+      outOfRange: !chk.ok, reason
     });
     navigator.vibrate?.(30);
-    toast(`${s?.name || ""} ${type === "in" ? "上班" : "下班"}打卡成功 ${hm(now)}`);
+    toast(`${s?.name || ""} ${type === "in" ? "上班" : "下班"}打卡成功 ${hm(now)}${reason ? "（範圍外）" : ""}`);
     await loadToday();
   } catch (err) {
     console.error(err);
@@ -703,7 +715,8 @@ function shiftPunchState(ds, sid, recs) {
     if (r) {
       const t = hm(r.t);
       const bad = plan && (kind === "in" ? t > plan : t < plan);
-      return { t, cls: bad ? "bad" : "ok", label: bad ? (kind === "in" ? "遲到" : "早退") : "正常", r };
+      const label = bad ? (kind === "in" ? "遲到" : "早退") : "正常";
+      return { t, cls: bad ? "bad" : r.outOfRange ? "warn" : "ok", label: r.outOfRange ? `${label}・範圍外` : label, r };
     }
     return passed(plan) ? { cls: "bad", label: kind === "in" ? "上班未打卡" : "下班未打卡" } : { cls: "wait", label: "尚未打卡" };
   };
@@ -747,9 +760,9 @@ function dayFlag(ds) {
   const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave");
   const has = rec.recs.some(r => r.date === ds);
   if (!work.length) return has ? "ok" : (rec.sch[ds]?.length ? "leave" : "");
-  let bad = false, wait = false;
-  work.forEach(id => { const st = shiftPunchState(ds, id, rec.recs); [st.in, st.out].forEach(x => { if (x.cls === "bad") bad = true; if (x.cls === "wait") wait = true; }); });
-  return bad ? "bad" : wait ? "wait" : "ok";
+  let bad = false, wait = false, warn = false;
+  work.forEach(id => { const st = shiftPunchState(ds, id, rec.recs); [st.in, st.out].forEach(x => { if (x.cls === "bad") bad = true; if (x.cls === "wait") wait = true; if (x.cls === "warn") warn = true; }); });
+  return bad ? "bad" : wait || warn ? "wait" : "ok";
 }
 
 function renderRecCal() {
@@ -776,7 +789,8 @@ function renderRecDay() {
     if (st.s.cat === "leave") return `<div class="rd-group"><div class="rd-shift"><span class="dot" style="background:${esc(st.s.color)}"></span>${esc(st.s.name)}<span class="rd-plan">休假</span></div></div>`;
     const row = (kind, x) => `<div class="rd-row"><i class="rdot ${x.cls}"></i><span class="rd-kind">${kind === "in" ? "上班" : "下班"}</span>
       <span class="rd-status ${x.cls}">${x.t ? `${x.t}・${x.label}` : x.label}</span>
-      ${x.r?.lat != null ? `<a class="rd-map" href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">地圖</a>` : ""}</div>`;
+      ${x.r?.lat != null ? `<a class="rd-map" href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">地圖</a>` : ""}</div>
+      ${x.r?.reason ? `<div class="rd-reason">原因：${esc(x.r.reason)}${x.r.dist != null ? `（距離 ${x.r.dist} 公尺）` : ""}</div>` : ""}`;
     return `<div class="rd-group">
       <div class="rd-shift"><span class="dot" style="background:${esc(st.s.color)}"></span>${esc(st.s.name)}${st.s.start && st.s.end ? `<span class="rd-plan">${st.s.start}–${st.s.end}</span>` : ""}</div>
       ${row("in", st.in)}${row("out", st.out)}
@@ -2005,7 +2019,8 @@ function renderReport() {
 
   const sum = {};
   rows.forEach(r => {
-    const s = sum[r.u.id] ??= { u: r.u, days: 0, hrs: 0, late: 0, early: 0, miss: 0 };
+    const s = sum[r.u.id] ??= { u: r.u, days: 0, hrs: 0, late: 0, early: 0, miss: 0, far: 0 };
+    s.far += [...(r.g?.ins || []), ...(r.g?.outs || [])].filter(x => x.outOfRange).length;
     if (r.g) s.days++;
     s.hrs += r.g?.hrs || 0;
     r.st.forEach(([, t]) => {
@@ -2016,8 +2031,8 @@ function renderReport() {
   });
   $("#repSum").innerHTML = Object.values(sum).map(s => `
     <tr><td>${esc(s.u.empNo)}</td><td>${esc(s.u.name)}</td><td>${s.days}</td>
-    <td>${s.hrs.toFixed(2)}</td><td>${s.late}</td><td>${s.early}</td><td>${s.miss}</td></tr>`).join("")
-    || `<tr><td colspan="7" class="empty">本月沒有資料</td></tr>`;
+    <td>${s.hrs.toFixed(2)}</td><td>${s.late}</td><td>${s.early}</td><td>${s.miss}</td><td>${s.far ? `<span class="tag warn">${s.far}</span>` : 0}</td></tr>`).join("")
+    || `<tr><td colspan="8" class="empty">本月沒有資料</td></tr>`;
 
   $("#repList").innerHTML = rows.map(r => `
     <tr>
@@ -2025,7 +2040,8 @@ function renderReport() {
       <td>${r.ids.map(id => chipHtml(id)).join(" ") || "—"}</td>
       <td>${hms(r.g?.in) || "—"}</td><td>${hms(r.g?.out) || "—"}</td>
       <td>${r.g?.hrs ? r.g.hrs.toFixed(2) : "—"}</td>
-      <td>${statusHtml(r.st)}</td>
+      <td>${statusHtml(r.st)}${[...(r.g?.ins || []), ...(r.g?.outs || [])].filter(x => x.outOfRange).map(x =>
+        `<div class="far-note"><span class="tag warn">${x.type === "in" ? "上班" : "下班"}範圍外</span>${esc(x.reason || "")}</div>`).join("")}</td>
       <td>${r.g?.inRec ? mapLink(r.g.inRec) : "—"}</td>
     </tr>`).join("") || `<tr><td colspan="9" class="empty">本月沒有資料</td></tr>`;
 }

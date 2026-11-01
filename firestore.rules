@@ -70,7 +70,9 @@ service cloud.firestore {
       return !('shiftId' in d) || d.shiftId == null || d.shiftId == ''
         || !exists(shiftPath(d.shiftId))
         || needLoc(d) == ''
-        || inRange(d, needLoc(d));
+        || inRange(d, needLoc(d))
+        // 範圍外：必須標記並填寫原因
+        || (d.get('outOfRange', false) == true && d.get('reason', '') is string && d.reason.size() >= 2);
     }
 
     // 打卡：只能用自己的身分、伺服器時間、在打卡範圍內新增；不能修改或刪除
