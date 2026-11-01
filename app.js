@@ -3,14 +3,15 @@ import {
   getAuth, onAuthStateChanged, signInWithCustomToken, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
+  initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=5";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=6";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+// LINE App 內建瀏覽器用 long polling 連線，避免 Firestore 卡住
+const db = initializeFirestore(app, { experimentalForceLongPolling: true });
 const liff = window.liff;
 
 /* ================= 工具 ================= */
@@ -87,7 +88,10 @@ async function boot() {
   }
   // 已有 Firebase 登入狀態就直接進入
   const user = await new Promise(res => { const un = onAuthStateChanged(auth, u => { un(); res(u); }); });
-  if (user && await enterApp(user)) return;
+  if (user) {
+    if (await enterApp(user)) return;
+    if ($("#authMsg").textContent) return showLogin();   // 顯示失敗原因，按按鈕重試
+  }
   if (liff.isLoggedIn()) return lineAuth();
   showLogin();
 }
@@ -234,6 +238,17 @@ $("#logoutBtn").onclick = async () => {
 };
 
 async function enterApp(user) {
+  try {
+    return await withTimeout(enterAppInner(user), 20000, "讀取資料庫逾時，請檢查網路後重試");
+  } catch (err) {
+    console.error(err);
+    setMsg("進入系統失敗：" + errMsg(err));
+    try { await signOut(auth); } catch {}
+    return false;
+  }
+}
+
+async function enterAppInner(user) {
   try {
     const { claims } = await user.getIdTokenResult();
     if (!claims.empId) { await signOut(auth); return false; }

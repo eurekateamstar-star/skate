@@ -134,3 +134,4 @@ main{flex:1;padding:20px;min-width:0}
 .line-cell{display:flex;align-items:center;gap:6px}
 
 textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit;resize:vertical}
+.cand-list .empty{grid-column:1/-1}
