@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>打卡系統</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ========== 登入 / 註冊 ========== -->
+<div id="authView" class="auth hidden">
+  <div class="auth-card">
+    <h1>⏱ 打卡系統</h1>
+    <div class="tabs">
+      <button data-tab="login" class="active">登入</button>
+      <button data-tab="register">註冊</button>
+    </div>
+    <form id="authForm">
+      <input id="regName" placeholder="姓名" class="reg-only hidden">
+      <input id="regEmpNo" placeholder="員工編號（例：W001）" class="reg-only hidden">
+      <input id="email" type="email" placeholder="Email" required autocomplete="username">
+      <input id="password" type="password" placeholder="密碼（至少 6 碼）" required minlength="6" autocomplete="current-password">
+      <button type="submit" class="btn primary" id="authSubmit">登入</button>
+    </form>
+    <p class="msg" id="authMsg"></p>
+  </div>
+</div>
+
+<!-- ========== 主畫面 ========== -->
+<div id="appView" class="hidden">
+  <header class="topbar">
+    <button id="menuBtn" class="icon-btn" aria-label="選單">☰</button>
+    <div class="brand">⏱ 打卡系統</div>
+    <div class="user">
+      <span id="userName"></span>
+      <button id="logoutBtn" class="btn small">登出</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" id="sidebar">
+      <div class="nav-title">個人專區</div>
+      <a data-view="clock" class="active">🕘 打卡</a>
+      <a data-view="records">📋 出勤紀錄</a>
+      <a data-view="mySchedule">📅 我的班表</a>
+      <div class="admin-only hidden">
+        <div class="nav-title">管理者專區</div>
+        <a data-view="employees">👥 員工管理</a>
+        <a data-view="shifts">🏷 班別設定</a>
+        <a data-view="scheduling">🗓 排班作業</a>
+        <a data-view="report">📊 出勤報表</a>
+      </div>
+    </nav>
+
+    <main>
+      <!-- 打卡 -->
+      <section id="view-clock" class="view">
+        <div class="card clock-card">
+          <div id="nowDate" class="now-date"></div>
+          <div id="nowTime" class="now-time">--:--:--</div>
+          <div id="todayShift" class="today-shift"></div>
+          <div class="clock-btns">
+            <button class="btn big in" id="clockIn">上班打卡</button>
+            <button class="btn big out" id="clockOut">下班打卡</button>
+          </div>
+          <label class="chk"><input type="checkbox" id="useGps" checked> 記錄 GPS 位置</label>
+        </div>
+        <div class="card">
+          <h3>今日打卡紀錄</h3>
+          <div class="table-wrap">
+            <table class="tbl">
+              <thead><tr><th>類型</th><th>時間</th><th>位置</th></tr></thead>
+              <tbody id="todayList"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 出勤紀錄 -->
+      <section id="view-records" class="view hidden">
+        <div class="view-head">
+          <h2>出勤紀錄</h2>
+          <input type="month" id="recMonth">
+        </div>
+        <div class="summary" id="recSummary"></div>
+        <div class="card table-wrap">
+          <table class="tbl">
+            <thead><tr><th>日期</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th></tr></thead>
+            <tbody id="recList"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 我的班表 -->
+      <section id="view-mySchedule" class="view hidden">
+        <div class="view-head">
+          <h2>我的班表</h2>
+          <input type="month" id="mySchMonth">
+        </div>
+        <div class="card"><div class="cal" id="myCal"></div></div>
+      </section>
+
+      <!-- 員工管理 -->
+      <section id="view-employees" class="view hidden">
+        <div class="view-head"><h2>員工管理</h2></div>
+        <div class="card table-wrap">
+          <table class="tbl">
+            <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th></th></tr></thead>
+            <tbody id="empList"></tbody>
+          </table>
+          <p class="hint">新員工請自行在登入頁「註冊」，註冊後會出現在這裡，可修改員編、姓名與權限。</p>
+        </div>
+      </section>
+
+      <!-- 班別設定 -->
+      <section id="view-shifts" class="view hidden">
+        <div class="view-head"><h2>班別設定</h2></div>
+        <div class="card">
+          <h3>新增班別</h3>
+          <form id="shiftForm" class="form-row">
+            <select id="shCat">
+              <option value="shift">班別</option>
+              <option value="leave">休假</option>
+            </select>
+            <input id="shName" placeholder="名稱（例：早班）" required>
+            <input id="shStart" type="time" title="開始時間">
+            <span>~</span>
+            <input id="shEnd" type="time" title="結束時間">
+            <input id="shColor" type="color" value="#2e9e3f" title="顏色">
+            <button class="btn primary">新增</button>
+          </form>
+          <p class="hint">休假類（國定假日、例假日…）可不填時間。有填時間的班別會用來判斷遲到 / 早退。</p>
+        </div>
+        <div class="card table-wrap">
+          <table class="tbl">
+            <thead><tr><th>類別</th><th>名稱</th><th>時間</th><th></th></tr></thead>
+            <tbody id="shiftList"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 排班作業 -->
+      <section id="view-scheduling" class="view hidden">
+        <div class="view-head">
+          <h2 id="schTitle">排班作業</h2>
+          <input type="month" id="schMonth">
+          <button class="btn small" id="copyPrevBtn">複製上月班表</button>
+        </div>
+        <div class="card">
+          <div class="pal-row"><span class="pal-label">班別</span><div class="palette" id="palShift"></div></div>
+          <div class="pal-row"><span class="pal-label">休假</span><div class="palette" id="palLeave"></div></div>
+          <p class="hint">先點選上方班別，再點下方格子加入；點班別上的 × 可移除。</p>
+        </div>
+        <div class="sched-wrap">
+          <table class="sched" id="schedTable"></table>
+        </div>
+      </section>
+
+      <!-- 出勤報表 -->
+      <section id="view-report" class="view hidden">
+        <div class="view-head">
+          <h2>出勤報表</h2>
+          <input type="month" id="repMonth">
+          <select id="repEmp"><option value="">全部員工</option></select>
+          <button class="btn small" id="csvBtn">下載 CSV</button>
+        </div>
+        <div class="card table-wrap">
+          <h3>月統計</h3>
+          <table class="tbl">
+            <thead><tr><th>員編</th><th>姓名</th><th>出勤天數</th><th>總工時</th><th>遲到</th><th>早退</th><th>缺卡/缺勤</th></tr></thead>
+            <tbody id="repSum"></tbody>
+          </table>
+        </div>
+        <div class="card table-wrap">
+          <h3>每日明細</h3>
+          <table class="tbl">
+            <thead><tr><th>日期</th><th>員編</th><th>姓名</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th><th>位置</th></tr></thead>
+            <tbody id="repList"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

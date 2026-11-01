@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // 員工資料：登入者可讀；自己註冊時只能建立 employee；只有管理者能改權限
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid
+                    && request.resource.data.role == 'employee';
+      allow update: if isAdmin()
+                    || (request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
+    }
+
+    // 班別：大家可讀，管理者可改
+    match /shiftTypes/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // 班表：大家可讀，管理者可改
+    match /schedules/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // 打卡：只能用自己的身分、伺服器時間新增；員工只能看自己的；不能修改或刪除
+    match /attendance/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if signedIn()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.ts == request.time;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
