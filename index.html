@@ -7,7 +7,7 @@
   <title>打卡系統</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=13">
+  <link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 
@@ -163,7 +163,7 @@
 
         <div class="card sch-tools">
           <div class="pick-row">
-            <label class="pick-label">選擇班別</label>
+            <label class="pick-label">快速排班</label>
             <select id="schPick"></select>
             <span id="schPickChip"></span>
           </div>
@@ -172,7 +172,7 @@
             <div class="pal-row"><span class="pal-label">班別</span><div class="palette" id="palShift"></div></div>
             <div class="pal-row"><span class="pal-label">休假</span><div class="palette" id="palLeave"></div></div>
           </div>
-          <p class="hint desk-only">選好班別後點表格格子加入；點班別上的 × 移除。</p>
+          <p class="hint desk-only">點格子會跳出班別選單（含推薦）；若上方先選好「快速排班」的班別，點格子會直接加入，適合大量排同一個班。</p>
           <div class="emp-row mob-only">
             <button class="icon-btn" id="schPrev" aria-label="上一位"><svg class="ic"><use href="#i-left"/></svg></button>
             <select id="schEmp"></select>
@@ -308,6 +308,32 @@
       <a data-view="shifts"><svg class="ic"><use href="#i-tag"/></svg>班別設定</a>
     </div>
   </div>
+  <!-- 點日期：選擇班別 -->
+  <div class="modal-mask hidden" id="dayModal">
+    <div class="modal">
+      <div class="modal-head">
+        <span style="min-width:56px"></span>
+        <h3 id="dpTitle">選擇班別</h3>
+        <button class="btn link strong" data-close>完成</button>
+      </div>
+      <div class="modal-body">
+        <div class="group">
+          <div class="field-head"><label>已排班別</label><span class="count">點 × 移除</span></div>
+          <div class="dp-current" id="dpCurrent"></div>
+        </div>
+        <div class="group" id="dpRecWrap">
+          <div class="field-head"><label>✨ 推薦</label><span class="count" id="dpRecNote"></span></div>
+          <div class="dp-rec" id="dpRec"></div>
+        </div>
+        <div class="group">
+          <div class="field-head"><label>全部班別</label><span class="count">點選加入 / 取消</span></div>
+          <input class="filter" id="dpFilter" placeholder="搜尋班別或代碼">
+          <div class="check-list" id="dpList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 班表設定 -->
   <div class="modal-mask hidden" id="rosterModal">
     <div class="modal">
@@ -369,6 +395,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=13"></script>
+<script type="module" src="app.js?v=14"></script>
 </body>
 </html>

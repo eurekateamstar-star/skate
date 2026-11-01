@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=13";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=14";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -914,10 +914,11 @@ async function loadScheduling() {
   const opt = s => `<option value="${s.id}">${esc(s.name)}${s.start && s.end ? `（${s.start}-${s.end}）` : ""}</option>`;
   const shifts = rosterShifts().filter(s => (s.cat || "shift") === "shift");
   const leaves = rosterShifts().filter(s => s.cat === "leave");
-  $("#schPick").innerHTML = `<option value="">— 請選擇班別 —</option>` +
+  $("#schPick").innerHTML = `<option value="">快速排班：關閉（點日期選擇班別）</option>` +
     (shifts.length ? `<optgroup label="班別">${shifts.map(opt).join("")}</optgroup>` : "") +
     (leaves.length ? `<optgroup label="休假">${leaves.map(opt).join("")}</optgroup>` : "");
 
+  await loadHistory(month).catch(err => console.warn("歷史排班載入失敗", err));
   renderPalette();
   syncPick();
   renderSchedTable(month);
@@ -1128,12 +1129,122 @@ async function onCellClick(e, cell) {
     const sid = e.target.closest(".chip").dataset.sid;
     ids = ids.filter(i => i !== sid);
   } else {
-    if (!selShift) return toast("請先選擇班別");
+    if (!selShift) return openDay(cell);          // 沒選快速排班 → 跳出選單
     if (ids.includes(selShift)) return toast("這天已經有這個班別");
     ids.push(selShift);
   }
   await saveCell(key, ids, cell);
 }
+
+// ---- 歷史排班（推薦用）----
+let history = { month: null, list: [] };
+async function loadHistory(month) {
+  if (history.month === month) return;
+  const [y, m] = month.split("-").map(Number);
+  const months = [1, 2, 3].map(i => ym(new Date(y, m - 1 - i, 1)));
+  const snap = await getDocs(query(collection(db, "schedules"), where("month", "in", months)));
+  history = { month, list: snap.docs.map(d => d.data()) };
+}
+const wdOf = ds => new Date(ds + "T00:00:00").getDay();
+const empName = id => employees.find(u => u.id === id)?.name || "";
+
+// 依「同一個星期幾」統計：這個人常排什麼、每個班別常由誰負責
+function analyze(empId, ds) {
+  const wd = wdOf(ds);
+  const rows = history.list.map(x => [x.empId, x.date, x.shiftIds || []]);
+  for (const [k, ids] of Object.entries(schedMap)) {
+    const i = k.lastIndexOf("_");
+    if (k.slice(i + 1) !== ds) rows.push([k.slice(0, i), k.slice(i + 1), ids]);
+  }
+  const mine = {}, all = {}, who = {};
+  for (const [e, d, ids] of rows) {
+    if (wdOf(d) !== wd) continue;
+    for (const id of ids) {
+      all[id] = (all[id] || 0) + 1;
+      if (e === empId) mine[id] = (mine[id] || 0) + 1;
+      (who[id] ??= {})[e] = (who[id][e] || 0) + 1;
+    }
+  }
+  const topWho = id => {
+    const best = Object.entries(who[id] || {}).sort((a, b) => b[1] - a[1])[0];
+    return best ? { name: empName(best[0]), n: best[1], isMe: best[0] === empId } : null;
+  };
+  const allowed = new Set(rosterShifts().map(s => s.id));
+  const rec = Object.entries(mine).filter(([id, n]) => allowed.has(id) && n >= 2)
+    .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, n]) => ({ id, n, src: "mine" }));
+  if (rec.length < 4) {
+    Object.entries(all).filter(([id, n]) => allowed.has(id) && n >= 2 && !rec.some(r => r.id === id))
+      .sort((a, b) => b[1] - a[1]).slice(0, 4 - rec.length)
+      .forEach(([id, n]) => rec.push({ id, n, src: "all", top: topWho(id) }));
+  }
+  return { wd, rec, topWho };
+}
+
+// ---- 點日期：班別選單 ----
+let dp = null;
+function openDay(cell) {
+  const key = cell.dataset.key, i = key.lastIndexOf("_");
+  dp = { key, empId: key.slice(0, i), ds: key.slice(i + 1), cell };
+  const d = new Date(dp.ds + "T00:00:00");
+  $("#dpTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）${empName(dp.empId)}`;
+  $("#dpFilter").value = "";
+  renderDay();
+  $("#dayModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#dayModal").classList.add("open"));
+}
+function closeDay() {
+  $("#dayModal").classList.remove("open");
+  setTimeout(() => $("#dayModal").classList.add("hidden"), 200);
+  dp = null;
+}
+function renderDay() {
+  if (!dp) return;
+  const ids = schedMap[dp.key] || [];
+  const { wd, rec, topWho } = analyze(dp.empId, dp.ds);
+  const W = `週${WEEK[wd]}`;
+  $("#dpCurrent").innerHTML = ids.map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
+
+  const recF = rec.filter(r => !ids.includes(r.id) && shiftMap[r.id]);
+  $("#dpRecWrap").classList.toggle("hidden", !recF.length);
+  $("#dpRecNote").textContent = `依過去 3 個月${W}的排班`;
+  $("#dpRec").innerHTML = recF.map(r => {
+    const s = shiftMap[r.id];
+    const why = r.src === "mine" ? `他${W}排過 ${r.n} 次` : (r.top ? `${W}常由 ${esc(r.top.name)} 負責（${r.top.n} 次）` : `${W}常見班別`);
+    return `<button class="rec" data-add="${r.id}">
+      <span class="dot" style="background:${esc(s.color)}"></span>
+      <span class="rec-main"><span class="rec-name">${esc(s.name)}</span><span class="rec-why">${why}${s.start && s.end ? ` · ${s.start}–${s.end}` : ""}</span></span>
+      <span class="rec-add">＋</span></button>`;
+  }).join("");
+
+  const f = $("#dpFilter").value.trim().toLowerCase();
+  const list = rosterShifts().filter(s => !f || s.name.toLowerCase().includes(f) || (s.code || "").toLowerCase().includes(f));
+  $("#dpList").innerHTML = list.map(s => {
+    const t = topWho(s.id);
+    const sub = [s.start && s.end ? `${s.start}–${s.end}` : (s.cat === "leave" ? "休假" : ""),
+                 t ? `${W}常由${t.isMe ? "他本人" : " " + esc(t.name)}` : ""].filter(Boolean).join(" · ");
+    return `<label class="check-item"><input type="checkbox" data-sid="${s.id}" ${ids.includes(s.id) ? "checked" : ""}>
+      <span class="dot" style="background:${esc(s.color)}"></span>
+      <span class="ci-main"><span class="ci-name">${esc(s.name)}</span>${sub ? `<span class="ci-sub">${sub}</span>` : ""}</span></label>`;
+  }).join("") || `<p class="empty">找不到班別</p>`;
+}
+async function setDayShift(id, on) {
+  if (!dp) return;
+  let ids = [...(schedMap[dp.key] || [])];
+  if (on && !ids.includes(id)) ids.push(id);
+  if (!on) ids = ids.filter(x => x !== id);
+  // 畫面若已重繪，找回對應格子
+  const cell = document.querySelector(`[data-key="${CSS.escape(dp.key)}"]`) || dp.cell;
+  await saveCell(dp.key, ids, cell);
+  renderDay();
+}
+$("#dayModal").onclick = e => {
+  if (e.target.id === "dayModal" || e.target.closest("[data-close]")) return closeDay();
+  const add = e.target.closest("[data-add]");
+  if (add) return setDayShift(add.dataset.add, true);
+  if (e.target.classList.contains("x") && e.target.closest("#dpCurrent")) return setDayShift(e.target.closest(".chip").dataset.sid, false);
+};
+$("#dpList").onchange = e => { if (e.target.dataset.sid) setDayShift(e.target.dataset.sid, e.target.checked); };
+$("#dpFilter").oninput = renderDay;
 
 async function saveCell(key, ids, cell) {
   const i = key.lastIndexOf("_");
