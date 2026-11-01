@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 
@@ -152,7 +152,17 @@
             <input type="month" id="mySchMonth">
           </div>
         </div>
-        <div class="card" id="myCalWrap"><div class="cal" id="myCal"></div></div>
+        <div id="myCalWrap">
+          <div class="card cal-card"><div class="cal" id="myCal"></div></div>
+          <div class="card week-card">
+            <div class="wk-head">
+              <button class="icon-btn" id="wkPrev" aria-label="上一週"><svg class="ic"><use href="#i-left"/></svg></button>
+              <div class="wk-title"><b id="wkTitle"></b><span id="wkSub"></span></div>
+              <button class="icon-btn" id="wkNext" aria-label="下一週"><svg class="ic"><use href="#i-right"/></svg></button>
+            </div>
+            <div id="weekList"></div>
+          </div>
+        </div>
         <div id="teamWrap" class="hidden">
           <div class="sched-wrap desk-only"><table class="sched readonly" id="teamTable"></table></div>
           <div class="mob-only" id="teamDays"></div>
@@ -445,6 +455,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
-<script type="module" src="app.js?v=20"></script>
+<script type="module" src="app.js?v=21"></script>
 </body>
 </html>

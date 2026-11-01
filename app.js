@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=20";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=21";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -584,27 +584,81 @@ async function loadMySchedule() {
   const [y, m] = month.split("-");
   $("#mySchSub").textContent = (r.name || `${y}/${+m}月班表`) + (pub ? " · 已發布全部人班表" : "");
 
-  // 我的月曆
-  const sch = {};
-  snap.forEach(d => sch[d.data().date] = d.data().shiftIds || []);
+  // 我的月曆 + 週明細
+  mySch = {};
+  snap.forEach(d => mySch[d.data().date] = d.data().shiftIds || []);
   const days = daysOfMonth(month);
-  const today = ymd(new Date());
-  let html = [...WEEK].map(w => `<div class="hd">${w}</div>`).join("");
-  html += "<div></div>".repeat(days[0].getDay());
-  for (const d of days) {
-    const ds = ymd(d);
-    const wk = d.getDay() === 0 || d.getDay() === 6;
-    html += `<div class="day ${ds === today ? "today" : ""} ${wk ? "wkend" : ""}">
-      <div class="d">${d.getDate()}</div>
-      ${(sch[ds] || []).map(id => chipHtml(id)).join("")}
-    </div>`;
+  if (!mySel || mySel.slice(0, 7) !== month) {
+    const t = ymd(new Date());
+    mySel = t.slice(0, 7) === month ? t : ymd(days[0]);
   }
-  $("#myCal").innerHTML = html;
-
+  renderMyCal(month);
+  renderWeek();
   $("#myCalWrap").classList.toggle("hidden", mySchMode !== "mine");
   $("#teamWrap").classList.toggle("hidden", mySchMode !== "all");
   if (mySchMode === "all" && pub) renderTeam(month, pub);
 }
+
+let mySch = {}, mySel = null;
+const weekStart = ds => { const d = new Date(ds + "T00:00:00"); d.setDate(d.getDate() - d.getDay()); return d; };  // 週日開始，對齊月曆
+
+function renderMyCal(month) {
+  const days = daysOfMonth(month);
+  const today = ymd(new Date());
+  const ws = ymd(weekStart(mySel));
+  let html = [...WEEK].map(w => `<div class="hd">${w}</div>`).join("");
+  html += "<div></div>".repeat(days[0].getDay());
+  for (const d of days) {
+    const ds = ymd(d);
+    const ids = mySch[ds] || [];
+    const inWeek = ymd(weekStart(ds)) === ws;
+    html += `<div class="day ${ds === today ? "today" : ""} ${d.getDay() % 6 === 0 ? "wkend" : ""} ${inWeek ? "in-week" : ""} ${ds === mySel ? "sel" : ""}" data-ds="${ds}">
+      <div class="d">${d.getDate()}</div>
+      <div class="bars">${ids.slice(0, 4).map(id => `<i style="background:${esc(shiftMap[id]?.color || "#ccc")}"></i>`).join("")}</div>
+      <div class="chips">${ids.map(id => chipHtml(id)).join("")}</div>
+    </div>`;
+  }
+  $("#myCal").innerHTML = html;
+}
+
+function renderWeek() {
+  const start = weekStart(mySel);
+  const today = ymd(new Date());
+  const list = [];
+  for (let i = 0; i < 7; i++) { const d = new Date(start); d.setDate(start.getDate() + i); list.push(d); }
+  const md = d => `${d.getMonth() + 1}/${d.getDate()}`;
+  $("#wkTitle").textContent = `${md(list[0])} – ${md(list[6])}`;
+  let n = 0, mins = 0;
+  $("#weekList").innerHTML = list.map(d => {
+    const ds = ymd(d);
+    const ids = mySch[ds] || [];
+    const other = ds.slice(0, 7) !== $("#mySchMonth").value;
+    ids.forEach(id => { const s = shiftMap[id]; if (s?.start && s?.end) { n++; const [a, b] = [s.start, s.end].map(t => +t.slice(0, 2) * 60 + +t.slice(3)); mins += Math.max(0, b - a); } });
+    const items = ids.map(id => {
+      const s = shiftMap[id];
+      if (!s) return "";
+      return `<div class="wk-item"><i style="background:${esc(s.color)}"></i><span class="wk-name">${esc(s.name)}</span><span class="wk-time">${s.start && s.end ? `${s.start}–${s.end}` : (s.cat === "leave" ? "休假" : "")}</span></div>`;
+    }).join("");
+    return `<div class="wk-day ${ds === today ? "today" : ""} ${ds === mySel ? "sel" : ""} ${d.getDay() % 6 === 0 ? "wkend" : ""} ${other ? "other" : ""}" data-ds="${ds}">
+      <div class="wk-date"><b>${d.getDate()}</b><span>週${WEEK[d.getDay()]}</span></div>
+      <div class="wk-items">${items || `<span class="wk-off">${other ? "其他月份" : "休息"}</span>`}</div>
+    </div>`;
+  }).join("");
+  $("#wkSub").textContent = n ? `本週 ${n} 個班・約 ${Math.round(mins / 6) / 10} 小時` : "本週沒有排班";
+}
+
+function selectMyDay(ds) {
+  const month = $("#mySchMonth").value;
+  mySel = ds;
+  if (ds.slice(0, 7) !== month) { $("#mySchMonth").value = ds.slice(0, 7); return loadMySchedule(); }
+  renderMyCal(month);
+  renderWeek();
+}
+$("#myCal").onclick = e => { const c = e.target.closest(".day[data-ds]"); if (c) selectMyDay(c.dataset.ds); };
+$("#weekList").onclick = e => { const c = e.target.closest(".wk-day[data-ds]"); if (c && !c.classList.contains("other")) selectMyDay(c.dataset.ds); };
+const shiftWeek = n => { const d = new Date(mySel + "T00:00:00"); d.setDate(d.getDate() + 7 * n); selectMyDay(ymd(d)); };
+$("#wkPrev").onclick = () => shiftWeek(-1);
+$("#wkNext").onclick = () => shiftWeek(1);
 
 function renderTeam(month, pub) {
   const days = daysOfMonth(month);

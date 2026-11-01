@@ -198,6 +198,33 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .cal .day .d{font-weight:600;margin-bottom:5px;font-size:14px}
 .cal .day .chip{display:block;margin-bottom:3px;cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
 
+/* ---------- 我的班表：月曆 + 週明細 ---------- */
+.cal .day{cursor:pointer;transition:background .15s,box-shadow .15s}
+.cal .day .bars{display:none}
+.cal .day.in-week{background:var(--primary-l)}
+.cal .day.sel{box-shadow:inset 0 0 0 2px var(--primary)}
+.cal .day.sel .d{color:var(--primary)}
+.week-card{padding:16px 18px}
+.wk-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.wk-title{flex:1;text-align:center;display:flex;flex-direction:column}
+.wk-title b{font-size:17px;font-weight:600}
+.wk-title span{font-size:12.5px;color:var(--muted)}
+.wk-day{display:flex;gap:14px;padding:12px 4px;border-top:1px solid var(--sep-2);cursor:pointer;align-items:flex-start}
+.wk-day.sel{background:var(--primary-l);border-radius:12px;border-top-color:transparent}
+.wk-day.sel + .wk-day{border-top-color:transparent}
+.wk-day.other{opacity:.45;cursor:default}
+.wk-date{width:42px;flex-shrink:0;text-align:center;line-height:1.15}
+.wk-date b{display:block;font-size:20px;font-weight:600}
+.wk-date span{font-size:12px;color:var(--muted)}
+.wk-day.wkend .wk-date span{color:var(--orange-d)}
+.wk-day.today .wk-date b{color:#fff;background:var(--red);border-radius:50%;width:32px;height:32px;line-height:32px;margin:0 auto 2px}
+.wk-items{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px;padding-top:4px}
+.wk-item{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.wk-item i{width:4px;align-self:stretch;min-height:18px;border-radius:2px;flex-shrink:0}
+.wk-name{flex:1;min-width:0;font-size:14.5px;font-weight:500;line-height:1.35;word-break:break-all}
+.wk-time{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;padding-top:1px}
+.wk-off{color:#c7c7cc;font-size:14px;padding-top:2px}
+
 /* ---------- 團隊班表（手機） ---------- */
 .team-day{background:#fff;border-radius:16px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
 .team-day.today{box-shadow:inset 0 0 0 2px var(--primary)}
@@ -386,7 +413,12 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
   .cal .hd{font-size:11px;padding:2px}
   .cal .day{min-height:64px;padding:4px;border-radius:9px}
   .cal .day .d{font-size:12px;margin-bottom:3px}
-  .cal .day .chip{font-size:9.5px;padding:1px 4px;border-radius:4px}
+  .cal .day{min-height:52px;padding:6px 2px;text-align:center}
+  .cal .day .d{font-size:15px;margin-bottom:4px}
+  .cal .day .chips{display:none}
+  .cal .day .bars{display:flex;flex-direction:column;gap:2px;padding:0 4px}
+  .cal .day .bars i{display:block;height:4px;border-radius:2px}
+  .cal-card{padding:12px 10px}
 
   /* 排班（手機） */
   .sch-tools{position:sticky;top:calc(var(--top) + 8px);z-index:20;padding:12px;background:rgba(255,255,255,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
