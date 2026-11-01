@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=11";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=12";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -267,7 +267,7 @@ async function enterAppInner(user) {
 
     $("#userName").textContent = `${me.name}${me.role === "admin" ? "（管理者）" : ""}`;
     if (me.linePicture) { $("#userPic").src = me.linePicture; $("#userPic").classList.remove("hidden"); }
-    $(".admin-only").classList.toggle("hidden", me.role !== "admin");
+    $$(".admin-only").forEach(el => el.classList.toggle("hidden", me.role !== "admin"));
     await loadShiftTypes();
     $("#loginView").classList.add("hidden");
     $("#appView").classList.remove("hidden");
@@ -291,15 +291,40 @@ const loaders = {
   scheduling: loadScheduling,
   report: loadReport
 };
+const TITLES = {
+  clock: "打卡", records: "出勤紀錄", mySchedule: "我的班表", scheduling: "排班作業",
+  report: "出勤報表", employees: "員工管理", shifts: "班別設定"
+};
+const ADMIN_VIEWS = ["scheduling", "report", "employees", "shifts"];
 function showView(name) {
   $$(".view").forEach(v => v.classList.add("hidden"));
   $(`#view-${name}`).classList.remove("hidden");
-  $$(".sidebar a").forEach(a => a.classList.toggle("active", a.dataset.view === name));
-  $("#sidebar").classList.remove("open");
+  $$("[data-view]").forEach(a => a.classList.toggle("active", a.dataset.view === name));
+  $("#moreBtn").classList.toggle("active", ADMIN_VIEWS.includes(name));
+  $("#pageTitle").textContent = innerWidth <= 768 ? TITLES[name] : "打卡系統";
+  closeSheet();
+  scrollTo(0, 0);
   loaders[name]?.().catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); });
 }
-$$(".sidebar a").forEach(a => a.onclick = () => showView(a.dataset.view));
-$("#menuBtn").onclick = () => $("#sidebar").classList.toggle("open");
+$$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));
+
+// 手機版管理選單
+function openSheet() { $("#sheetMask").classList.remove("hidden"); requestAnimationFrame(() => $("#sheet").classList.add("open")); }
+function closeSheet() { $("#sheet").classList.remove("open"); $("#sheetMask").classList.add("hidden"); }
+$("#moreBtn").onclick = openSheet;
+$("#sheetMask").onclick = closeSheet;
+
+// 手機版表格變卡片：自動把表頭文字填到每格的 data-label
+function labelTable(tbl) {
+  const heads = [...tbl.querySelectorAll("thead th")].map(th => th.textContent.trim());
+  tbl.querySelectorAll("tbody tr").forEach(tr =>
+    [...tr.children].forEach((td, i) => td.dataset.label ??= heads[i] || ""));
+}
+new MutationObserver(muts => {
+  const set = new Set();
+  muts.forEach(m => { const t = m.target.closest?.("table.tbl"); if (t) set.add(t); });
+  set.forEach(labelTable);
+}).observe(document.body, { childList: true, subtree: true });
 
 const thisMonth = ym(new Date());
 ["#recMonth", "#mySchMonth", "#schMonth", "#repMonth"].forEach(s => $(s).value = thisMonth);
@@ -807,22 +832,54 @@ async function loadScheduling() {
 
   const [y, m] = month.split("-");
   $("#schTitle").textContent = `${y}/${+m}月班表`;
+  if (selShift && !shiftMap[selShift]) selShift = null;
 
-  const pal = cat => shiftTypes.filter(s => (s.cat || "shift") === cat).map(s =>
-    `<span class="chip ${selShift === s.id ? "sel" : ""}" style="background:${esc(s.color)}" data-pick="${s.id}" title="${esc(shiftTip(s))}">${esc(s.name)}</span>`
-  ).join("") || `<span class="hint" style="margin:0">（請先到「班別設定」新增）</span>`;
-  $("#palShift").innerHTML = pal("shift");
-  $("#palLeave").innerHTML = pal("leave");
+  // 下拉選單（手機、電腦共用）
+  const opt = s => `<option value="${s.id}">${esc(s.name)}${s.start && s.end ? `（${s.start}-${s.end}）` : ""}</option>`;
+  const shifts = shiftTypes.filter(s => (s.cat || "shift") === "shift");
+  const leaves = shiftTypes.filter(s => s.cat === "leave");
+  $("#schPick").innerHTML = `<option value="">— 請選擇班別 —</option>` +
+    (shifts.length ? `<optgroup label="班別">${shifts.map(opt).join("")}</optgroup>` : "") +
+    (leaves.length ? `<optgroup label="休假">${leaves.map(opt).join("")}</optgroup>` : "");
 
+  renderPalette();
+  syncPick();
   renderSchedTable(month);
+  renderSchedMobile(month);
 }
 
+function renderPalette() {
+  const f = ($("#schFilter").value || "").trim().toLowerCase();
+  const pal = cat => shiftTypes
+    .filter(s => (s.cat || "shift") === cat && (!f || s.name.toLowerCase().includes(f) || (s.code || "").toLowerCase().includes(f)))
+    .map(s => `<span class="chip ${selShift === s.id ? "sel" : ""}" style="background:${esc(s.color)}" data-pick="${s.id}" title="${esc(shiftTip(s))}">${esc(s.name)}</span>`)
+    .join("") || `<span class="hint" style="margin:0">${f ? "找不到符合的班別" : "（請先到「班別設定」新增）"}</span>`;
+  $("#palShift").innerHTML = pal("shift");
+  $("#palLeave").innerHTML = pal("leave");
+}
+$("#schFilter").oninput = renderPalette;
+
+function syncPick() {
+  $("#schPick").value = selShift || "";
+  $$("[data-pick]").forEach(c => c.classList.toggle("sel", c.dataset.pick === selShift));
+  $("#schPickChip").innerHTML = selShift ? chipHtml(selShift) : "";
+}
+$("#schPick").onchange = e => { selShift = e.target.value || null; syncPick(); };
+$("#view-scheduling").addEventListener("click", e => {
+  const pick = e.target.closest("[data-pick]");
+  if (!pick) return;
+  selShift = selShift === pick.dataset.pick ? null : pick.dataset.pick;
+  syncPick();
+});
+
+// ---- 電腦版：表格 ----
 function renderSchedTable(month) {
   const days = daysOfMonth(month);
   const list = activeEmployees();
+  const today = ymd(new Date());
   const wk = d => (d.getDay() === 0 || d.getDay() === 6) ? "wkend" : "";
-  let html = `<thead><tr><th class="name">姓名/員編</th>${days.map(d =>
-    `<th class="${wk(d)}">${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})</th>`).join("")}</tr></thead><tbody>`;
+  let html = `<thead><tr><th class="name">姓名 / 員編</th>${days.map(d =>
+    `<th class="${wk(d)}"${ymd(d) === today ? ' style="color:var(--primary)"' : ""}>${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）</th>`).join("")}</tr></thead><tbody>`;
   for (const u of list) {
     html += `<tr><td class="name">${esc(u.name)}<div class="emp-no">${esc(u.empNo || "")}</div></td>`;
     for (const d of days) {
@@ -835,15 +892,50 @@ function renderSchedTable(month) {
   $("#schedTable").innerHTML = list.length ? html : `<tbody><tr><td class="empty">尚無員工</td></tr></tbody>`;
 }
 
-$("#view-scheduling").addEventListener("click", e => {
-  const pick = e.target.closest("[data-pick]");
-  if (!pick) return;
-  selShift = selShift === pick.dataset.pick ? null : pick.dataset.pick;
-  $$("[data-pick]").forEach(c => c.classList.toggle("sel", c.dataset.pick === selShift));
-});
+$("#schedTable").onclick = e => onCellClick(e, e.target.closest("td.cell"));
 
-$("#schedTable").onclick = async e => {
-  const cell = e.target.closest("td.cell");
+// ---- 手機版：選一位員工，列出整月每天 ----
+function renderSchedMobile(month) {
+  const list = activeEmployees();
+  const sel = $("#schEmp");
+  const cur = sel.value;
+  sel.innerHTML = list.map(u => {
+    const n = Object.keys(schedMap).filter(k => k.startsWith(u.id + "_") && schedMap[k].length).length;
+    return `<option value="${u.id}">${esc(u.empNo)} ${esc(u.name)}（${n} 天）</option>`;
+  }).join("");
+  if (cur && list.some(u => u.id === cur)) sel.value = cur;
+  renderDayList(month);
+}
+function renderDayList(month = $("#schMonth").value) {
+  const empId = $("#schEmp").value;
+  if (!empId) { $("#schDays").innerHTML = `<p class="empty">尚無員工</p>`; return; }
+  const today = ymd(new Date());
+  $("#schDays").innerHTML = daysOfMonth(month).map(d => {
+    const ds = ymd(d), key = `${empId}_${ds}`;
+    const wk = d.getDay() === 0 || d.getDay() === 6;
+    return `<div class="day-row ${wk ? "wkend" : ""} ${ds === today ? "today" : ""}" data-key="${key}">
+      <div class="dr-date"><b>${d.getDate()}</b><span>週${WEEK[d.getDay()]}</span></div>
+      <div class="dr-chips">${dayChips(key)}</div>
+      <span class="dr-add">＋</span>
+    </div>`;
+  }).join("");
+}
+const dayChips = key => (schedMap[key] || []).map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
+
+$("#schEmp").onchange = () => renderDayList();
+function stepEmp(d) {
+  const sel = $("#schEmp");
+  const i = sel.selectedIndex + d;
+  if (i < 0 || i >= sel.options.length) return;
+  sel.selectedIndex = i;
+  renderDayList();
+}
+$("#schPrev").onclick = () => stepEmp(-1);
+$("#schNext").onclick = () => stepEmp(1);
+$("#schDays").onclick = e => onCellClick(e, e.target.closest(".day-row"));
+
+// ---- 共用：點格子加入 / 點 × 移除 ----
+async function onCellClick(e, cell) {
   if (!cell) return;
   const key = cell.dataset.key;
   let ids = [...(schedMap[key] || [])];
@@ -851,12 +943,12 @@ $("#schedTable").onclick = async e => {
     const sid = e.target.closest(".chip").dataset.sid;
     ids = ids.filter(i => i !== sid);
   } else {
-    if (!selShift) return toast("請先點選上方的班別");
-    if (ids.includes(selShift)) return;
+    if (!selShift) return toast("請先選擇班別");
+    if (ids.includes(selShift)) return toast("這天已經有這個班別");
     ids.push(selShift);
   }
   await saveCell(key, ids, cell);
-};
+}
 
 async function saveCell(key, ids, cell) {
   const i = key.lastIndexOf("_");
@@ -868,7 +960,8 @@ async function saveCell(key, ids, cell) {
       await deleteDoc(doc(db, "schedules", key));
     }
     schedMap[key] = ids;
-    if (cell) cell.innerHTML = ids.map(id => chipHtml(id, true)).join("");
+    if (cell?.classList.contains("day-row")) cell.querySelector(".dr-chips").innerHTML = dayChips(key);
+    else if (cell) cell.innerHTML = ids.map(id => chipHtml(id, true)).join("");
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 }
 

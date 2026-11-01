@@ -2,16 +2,40 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
   <title>打卡系統</title>
-  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
+
+<!-- 圖示 -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></symbol>
+    <symbol id="i-apps" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-in" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+  </defs>
+</svg>
 
 <!-- ========== LINE 登入 / 綁定 ========== -->
 <div id="loginView" class="auth hidden">
   <div class="auth-card">
-    <h1>⏱ 打卡系統</h1>
+    <div class="auth-logo"><svg class="ic"><use href="#i-clock"/></svg></div>
+    <h1>打卡系統</h1>
+    <p class="auth-sub">員工出勤與排班管理</p>
 
     <div id="stepLogin" class="hidden">
       <button class="btn line-btn" id="lineLoginBtn">使用 LINE 登入</button>
@@ -31,7 +55,7 @@
       <button class="btn link" id="backPick">← 重新選擇</button>
     </div>
 
-    <p class="loading" id="authLoading">載入中…</p>
+    <p class="loading" id="authLoading"><span class="spinner"></span>載入中…</p>
     <p class="msg" id="authMsg"></p>
   </div>
 </div>
@@ -39,27 +63,27 @@
 <!-- ========== 主畫面 ========== -->
 <div id="appView" class="hidden">
   <header class="topbar">
-    <button id="menuBtn" class="icon-btn" aria-label="選單">☰</button>
-    <div class="brand">⏱ 打卡系統</div>
+    <div class="brand"><span class="brand-ic"><svg class="ic"><use href="#i-clock"/></svg></span><span id="pageTitle">打卡系統</span></div>
     <div class="user">
       <img id="userPic" class="avatar hidden" alt="">
       <span id="userName"></span>
-      <button id="logoutBtn" class="btn small">登出</button>
+      <button id="logoutBtn" class="icon-btn" title="登出"><svg class="ic"><use href="#i-out"/></svg></button>
     </div>
   </header>
 
   <div class="layout">
-    <nav class="sidebar" id="sidebar">
+    <!-- 電腦版側欄 -->
+    <nav class="sidebar">
       <div class="nav-title">個人專區</div>
-      <a data-view="clock" class="active">🕘 打卡</a>
-      <a data-view="records">📋 出勤紀錄</a>
-      <a data-view="mySchedule">📅 我的班表</a>
+      <a data-view="clock"><svg class="ic"><use href="#i-clock"/></svg>打卡</a>
+      <a data-view="records"><svg class="ic"><use href="#i-list"/></svg>出勤紀錄</a>
+      <a data-view="mySchedule"><svg class="ic"><use href="#i-cal"/></svg>我的班表</a>
       <div class="admin-only hidden">
         <div class="nav-title">管理者專區</div>
-        <a data-view="employees">👥 員工管理</a>
-        <a data-view="shifts">🏷 班別設定</a>
-        <a data-view="scheduling">🗓 排班作業</a>
-        <a data-view="report">📊 出勤報表</a>
+        <a data-view="scheduling"><svg class="ic"><use href="#i-grid"/></svg>排班作業</a>
+        <a data-view="report"><svg class="ic"><use href="#i-chart"/></svg>出勤報表</a>
+        <a data-view="employees"><svg class="ic"><use href="#i-users"/></svg>員工管理</a>
+        <a data-view="shifts"><svg class="ic"><use href="#i-tag"/></svg>班別設定</a>
       </div>
     </nav>
 
@@ -71,19 +95,17 @@
           <div id="nowTime" class="now-time">--:--:--</div>
           <div id="todayShift" class="today-shift"></div>
           <div class="clock-btns">
-            <button class="btn big in" id="clockIn">上班打卡</button>
-            <button class="btn big out" id="clockOut">下班打卡</button>
+            <button class="btn big in" id="clockIn"><svg class="ic"><use href="#i-in"/></svg>上班打卡</button>
+            <button class="btn big out" id="clockOut"><svg class="ic"><use href="#i-out"/></svg>下班打卡</button>
           </div>
-          <label class="chk"><input type="checkbox" id="useGps" checked> 記錄 GPS 位置</label>
+          <label class="chk"><input type="checkbox" id="useGps" checked> <svg class="ic sm"><use href="#i-pin"/></svg>記錄 GPS 位置</label>
         </div>
         <div class="card">
           <h3>今日打卡紀錄</h3>
-          <div class="table-wrap">
-            <table class="tbl">
-              <thead><tr><th>類型</th><th>時間</th><th>位置</th></tr></thead>
-              <tbody id="todayList"></tbody>
-            </table>
-          </div>
+          <table class="tbl">
+            <thead><tr><th>類型</th><th>時間</th><th>位置</th></tr></thead>
+            <tbody id="todayList"></tbody>
+          </table>
         </div>
       </section>
 
@@ -94,7 +116,7 @@
           <input type="month" id="recMonth">
         </div>
         <div class="summary" id="recSummary"></div>
-        <div class="card table-wrap">
+        <div class="card">
           <table class="tbl">
             <thead><tr><th>日期</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th></tr></thead>
             <tbody id="recList"></tbody>
@@ -109,6 +131,65 @@
           <input type="month" id="mySchMonth">
         </div>
         <div class="card"><div class="cal" id="myCal"></div></div>
+      </section>
+
+      <!-- 排班作業 -->
+      <section id="view-scheduling" class="view hidden">
+        <div class="view-head">
+          <h2 id="schTitle">排班作業</h2>
+          <input type="month" id="schMonth">
+          <button class="btn small" id="copyPrevBtn">複製上月</button>
+        </div>
+
+        <div class="card sch-tools">
+          <div class="pick-row">
+            <label class="pick-label">選擇班別</label>
+            <select id="schPick"></select>
+            <span id="schPickChip"></span>
+          </div>
+          <div class="palette-wrap desk-only">
+            <input id="schFilter" class="filter" placeholder="搜尋班別…">
+            <div class="pal-row"><span class="pal-label">班別</span><div class="palette" id="palShift"></div></div>
+            <div class="pal-row"><span class="pal-label">休假</span><div class="palette" id="palLeave"></div></div>
+          </div>
+          <p class="hint desk-only">選好班別後點表格格子加入；點班別上的 × 移除。</p>
+          <div class="emp-row mob-only">
+            <button class="icon-btn" id="schPrev" aria-label="上一位"><svg class="ic"><use href="#i-left"/></svg></button>
+            <select id="schEmp"></select>
+            <button class="icon-btn" id="schNext" aria-label="下一位"><svg class="ic"><use href="#i-right"/></svg></button>
+          </div>
+        </div>
+
+        <!-- 電腦版：員工 × 日期表格 -->
+        <div class="sched-wrap desk-only">
+          <table class="sched" id="schedTable"></table>
+        </div>
+        <!-- 手機版：單一員工的日期清單 -->
+        <div class="day-list mob-only" id="schDays"></div>
+      </section>
+
+      <!-- 出勤報表 -->
+      <section id="view-report" class="view hidden">
+        <div class="view-head">
+          <h2>出勤報表</h2>
+          <input type="month" id="repMonth">
+          <select id="repEmp"><option value="">全部員工</option></select>
+          <button class="btn small" id="csvBtn">下載 CSV</button>
+        </div>
+        <div class="card">
+          <h3>月統計</h3>
+          <table class="tbl">
+            <thead><tr><th>員編</th><th>姓名</th><th>出勤天數</th><th>總工時</th><th>遲到</th><th>早退</th><th>缺卡/缺勤</th></tr></thead>
+            <tbody id="repSum"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>每日明細</h3>
+          <table class="tbl">
+            <thead><tr><th>日期</th><th>員編</th><th>姓名</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th><th>位置</th></tr></thead>
+            <tbody id="repList"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- 員工管理 -->
@@ -126,17 +207,17 @@
             </select>
             <button class="btn primary">新增</button>
           </form>
-          <p class="hint">員工第一次用 LINE 登入時，點選自己的名字並輸入這裡的 Email，就會完成綁定。Email 輸錯 5 次會鎖定，按「解除綁定」可重設。</p>
+          <p class="hint">員工第一次用 LINE 登入時，點選自己的名字並輸入這裡的 Email 即完成綁定。Email 輸錯 5 次會鎖定，按「解除綁定」可重設。</p>
         </div>
-        <div class="card">
-          <h3>批次匯入員工</h3>
+        <details class="card">
+          <summary><h3>批次匯入員工</h3></summary>
           <textarea id="importText" rows="6" placeholder="每行一位：員編,姓名,Email,到職日,權限&#10;例：W002,蔡宛如,george52069@gmail.com,2025-08-31&#10;權限可留空（預設員工），填 admin 為管理者"></textarea>
           <div class="form-row" style="margin-top:8px">
             <button class="btn primary" id="importBtn">匯入</button>
-            <span class="hint" style="margin:0">Email 已存在的會更新資料，不會重複新增；可用逗號或 Tab 分隔（可直接從 Excel 複製）。</span>
+            <span class="hint" style="margin:0">Email 已存在的會更新資料；可用逗號或 Tab 分隔（可直接從 Excel 複製）。</span>
           </div>
-        </div>
-        <div class="card table-wrap">
+        </details>
+        <div class="card">
           <table class="tbl">
             <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th>LINE 綁定</th><th>狀態</th><th></th></tr></thead>
             <tbody id="empList"></tbody>
@@ -163,16 +244,16 @@
           </form>
           <p class="hint">休假類（國定假日、例假日…）可不填時間。有填時間的班別會用來判斷遲到 / 早退。</p>
         </div>
-        <div class="card">
-          <h3>批次新增班別</h3>
+        <details class="card">
+          <summary><h3>批次新增班別</h3></summary>
           <textarea id="shiftBulk" rows="6" placeholder="每行一個班別，格式：代碼,名稱,上班,下班,休息開始,休息結束（代碼、時間可省略）&#10;例：R001,迎風溜冰場(晨訓),09:00,10:30&#10;All,全日班,08:00,18:00,12:00,13:00&#10;只寫名稱也可以，名稱裡有時間（0740-0830）會自動帶入；休假類請在後面加「,休假」"></textarea>
           <div class="form-row" style="margin-top:8px">
             <button class="btn primary" id="shiftBulkBtn">批次新增</button>
             <button class="btn" id="leaveDefaultBtn">一鍵加入預設休假</button>
-            <span class="hint" style="margin:0">同名班別會更新代碼與時間（保留顏色）；新班別依名稱自動配色。</span>
+            <span class="hint" style="margin:0">同名班別會更新代碼與時間（保留顏色）。</span>
           </div>
-        </div>
-        <div class="card table-wrap">
+        </details>
+        <div class="card">
           <div class="form-row" style="margin-bottom:10px">
             <button class="btn small danger" id="shDelSel">刪除勾選</button>
             <button class="btn small danger" id="shDelAll">全部刪除</button>
@@ -184,48 +265,28 @@
           </table>
         </div>
       </section>
-
-      <!-- 排班作業 -->
-      <section id="view-scheduling" class="view hidden">
-        <div class="view-head">
-          <h2 id="schTitle">排班作業</h2>
-          <input type="month" id="schMonth">
-          <button class="btn small" id="copyPrevBtn">複製上月班表</button>
-        </div>
-        <div class="card">
-          <div class="pal-row"><span class="pal-label">班別</span><div class="palette" id="palShift"></div></div>
-          <div class="pal-row"><span class="pal-label">休假</span><div class="palette" id="palLeave"></div></div>
-          <p class="hint">先點選上方班別，再點下方格子加入；點班別上的 × 可移除。</p>
-        </div>
-        <div class="sched-wrap">
-          <table class="sched" id="schedTable"></table>
-        </div>
-      </section>
-
-      <!-- 出勤報表 -->
-      <section id="view-report" class="view hidden">
-        <div class="view-head">
-          <h2>出勤報表</h2>
-          <input type="month" id="repMonth">
-          <select id="repEmp"><option value="">全部員工</option></select>
-          <button class="btn small" id="csvBtn">下載 CSV</button>
-        </div>
-        <div class="card table-wrap">
-          <h3>月統計</h3>
-          <table class="tbl">
-            <thead><tr><th>員編</th><th>姓名</th><th>出勤天數</th><th>總工時</th><th>遲到</th><th>早退</th><th>缺卡/缺勤</th></tr></thead>
-            <tbody id="repSum"></tbody>
-          </table>
-        </div>
-        <div class="card table-wrap">
-          <h3>每日明細</h3>
-          <table class="tbl">
-            <thead><tr><th>日期</th><th>員編</th><th>姓名</th><th>班別</th><th>上班</th><th>下班</th><th>工時</th><th>狀態</th><th>位置</th></tr></thead>
-            <tbody id="repList"></tbody>
-          </table>
-        </div>
-      </section>
     </main>
+  </div>
+
+  <!-- 手機版底部導覽 -->
+  <nav class="tabbar">
+    <a data-view="clock"><svg class="ic"><use href="#i-clock"/></svg><span>打卡</span></a>
+    <a data-view="records"><svg class="ic"><use href="#i-list"/></svg><span>紀錄</span></a>
+    <a data-view="mySchedule"><svg class="ic"><use href="#i-cal"/></svg><span>班表</span></a>
+    <a class="admin-only hidden" id="moreBtn"><svg class="ic"><use href="#i-apps"/></svg><span>管理</span></a>
+  </nav>
+
+  <!-- 手機版管理選單 -->
+  <div class="sheet-mask hidden" id="sheetMask"></div>
+  <div class="sheet" id="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">管理者專區</div>
+    <div class="sheet-grid">
+      <a data-view="scheduling"><svg class="ic"><use href="#i-grid"/></svg>排班作業</a>
+      <a data-view="report"><svg class="ic"><use href="#i-chart"/></svg>出勤報表</a>
+      <a data-view="employees"><svg class="ic"><use href="#i-users"/></svg>員工管理</a>
+      <a data-view="shifts"><svg class="ic"><use href="#i-tag"/></svg>班別設定</a>
+    </div>
   </div>
 </div>
 
@@ -244,6 +305,6 @@
   }, 25000);
 </script>
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=12"></script>
 </body>
 </html>
