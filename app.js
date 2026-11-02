@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=42";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=43";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -785,7 +785,7 @@ $("#mkSubmit").onclick = async () => {
     const ref = await addDoc(collection(db, "punchRequests"), {
       empId: me.id, name: me.name, empNo: me.empNo || "",
       date: mk.date, month: mk.date.slice(0, 7), shiftId: mk.sid, shiftName: s?.name || "",
-      type: mk.type, time, reason, status: "pending", createdAt: serverTimestamp()
+      type: mk.type, time, reason, status: "pending", notified: false, createdAt: serverTimestamp()
     });
     myReqs.push({ id: ref.id, empId: me.id, date: mk.date, shiftId: mk.sid, type: mk.type, time, reason, status: "pending" });
     closeMakeup();
@@ -2422,7 +2422,7 @@ $("#lvSubmit").onclick = async () => {
     const data = { date: lv.date, month: lv.date.slice(0, 7), shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""),
       leaveType: type, reason, subNeed, subName, subs, subNames };
     if (editing) await updateDoc(doc(db, "leaveRequests", editing), { ...data, status: "pending", empId: me.id, updatedAt: serverTimestamp() });
-    else await addDoc(collection(db, "leaveRequests"), { empId: me.id, name: me.name, empNo: me.empNo || "", ...data, status: "pending", createdAt: serverTimestamp() });
+    else await addDoc(collection(db, "leaveRequests"), { empId: me.id, name: me.name, empNo: me.empNo || "", ...data, status: "pending", notified: false, createdAt: serverTimestamp() });
     resetLvForm();
     toast(editing ? "已更新請假申請" : "已送出請假申請，等待管理者審核");
     loadMyLeaves();

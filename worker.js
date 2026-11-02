@@ -227,6 +227,16 @@ class Firestore {
     });
     return (res || []).filter(x => x.document).map(x => decode(x.document));
   }
+  async whereAnd(coll, eq) {
+    const val = v => typeof v === "boolean" ? { booleanValue: v } : { stringValue: String(v) };
+    const filters = Object.entries(eq).map(([k, v]) => ({ fieldFilter: { field: { fieldPath: k }, op: "EQUAL", value: val(v) } }));
+    const res = await this.req(`${this.base}:runQuery`, {
+      method: "POST",
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: coll }],
+        where: filters.length === 1 ? filters[0] : { compositeFilter: { op: "AND", filters } } } })
+    });
+    return (res || []).filter(x => x.document).map(x => decode(x.document));
+  }
   async list(coll) {
     const out = [];
     let pageToken = "";
@@ -358,7 +368,29 @@ async function linkMenuFor(env, userId, isAdmin) {
 /* ---------- 上下班提醒（LINE 推播） ---------- */
 const REMIND_BEFORE = 10;   // 上班前幾分鐘提醒
 const REMIND_AFTER = 10;    // 下班後幾分鐘仍未打卡就提醒
-let cacheShifts = null, cacheEmps = null, cacheAt = 0;
+
+// 每天的提醒計畫存在 reminders/{日期}._plan，每次排程只讀這 1 筆（節省 Firestore 讀取額度）
+async function loadPlan(fs, today, force) {
+  const doc = (await fs.getPath(`reminders/${today}`)) || {};
+  let plan = null;
+  try { plan = JSON.parse(doc._plan || "null"); } catch {}
+  if (force || !plan || Date.now() - plan.at > 60 * 60e3) {
+    const [shifts, emps, schedules] = await Promise.all([fs.list("shiftTypes"), fs.list("employees"), fs.where("schedules", "date", today)]);
+    const shiftBy = Object.fromEntries(shifts.map(s => [s.id, s]));
+    const items = [];
+    for (const x of schedules) for (const sid of x.shiftIds || []) {
+      const s = shiftBy[sid];
+      if (!s || s.cat === "leave" || x.leave?.[sid] || !s.start || !s.end) continue;
+      items.push({ e: x.empId, s: sid, n: s.name, st: s.start, en: s.end });
+    }
+    plan = {
+      at: Date.now(), items,
+      emps: Object.fromEntries(emps.filter(e => e.active !== false).map(e => [e.id, { name: e.name || "", line: String(e.lineUid || "").startsWith("line:") ? e.lineUid.slice(5) : "", admin: e.role === "admin" }]))
+    };
+    await fs.patchPath(`reminders/${today}`, { _plan: JSON.stringify(plan) });
+  }
+  return { doc, plan };
+}
 
 async function runReminders(env, manual = false) {
   const tp = new Date(Date.now() + 8 * 3600e3);          // 台灣時間
@@ -368,35 +400,31 @@ async function runReminders(env, manual = false) {
   const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
   const result = { date: today, time: `${String(Math.floor(now / 60)).padStart(2, "0")}:${String(now % 60).padStart(2, "0")}`, sent: [] };
 
-  if (!cacheShifts || Date.now() - cacheAt > 30 * 60e3) {
-    [cacheShifts, cacheEmps] = await Promise.all([fs.list("shiftTypes"), fs.list("employees")]);
-    cacheAt = Date.now();
-  }
-  const shiftBy = Object.fromEntries(cacheShifts.map(s => [s.id, s]));
-  const empBy = Object.fromEntries(cacheEmps.map(e => [e.id, e]));
+  const { doc: sentDoc, plan } = await loadPlan(fs, today, manual);
+  const empBy = Object.fromEntries(Object.entries(plan.emps).map(([id, e]) => [id, { id, name: e.name, lineUid: e.line ? "line:" + e.line : "", role: e.admin ? "admin" : "staff" }]));
   const toMin = t => t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
   const inWin = (t, a) => t != null && now >= t + a && now < t + a + 5;   // 每 5 分鐘一個時間窗
 
   // 1. 找出這 5 分鐘需要提醒的班
-  const schedules = await fs.where("schedules", "date", today);
   const cands = [];
-  for (const x of schedules) for (const sid of x.shiftIds || []) {
-    const s = shiftBy[sid];
-    if (!s || s.cat === "leave" || x.leave?.[sid]) continue;   // 已請假不提醒
-    if (inWin(toMin(s.start), -REMIND_BEFORE)) cands.push({ empId: x.empId, sid, s, type: "in" });
-    if (inWin(toMin(s.end), REMIND_AFTER)) cands.push({ empId: x.empId, sid, s, type: "out" });
+  for (const it of plan.items) {
+    const s = { name: it.n, start: it.st, end: it.en };
+    if (inWin(toMin(it.st), -REMIND_BEFORE)) cands.push({ empId: it.e, sid: it.s, s, type: "in" });
+    if (inWin(toMin(it.en), REMIND_AFTER)) cands.push({ empId: it.e, sid: it.s, s, type: "out" });
   }
   if (cands.length) {
-    const att = await fs.where("attendance", "date", today);
-    const sentDoc = (await fs.getPath(`reminders/${today}`)) || {};
     const mark = {};
+    const schCache = {}, attCache = {};
     for (const c of cands) {
       const key = `${c.empId}_${c.sid}_${c.type}`;
       if (sentDoc[key]) continue;
-      const punched = att.some(a => a.empId === c.empId && a.shiftId === c.sid && a.type === c.type);
-      if (punched) continue;
       const e = empBy[c.empId];
-      if (!e || e.active === false || !String(e.lineUid || "").startsWith("line:")) continue;
+      if (!e || !e.lineUid) continue;
+      // 再確認一次：班還在、沒請假、還沒打卡
+      const sch = schCache[c.empId] ??= await fs.getPath(`schedules/${c.empId}_${today}`);
+      if (!sch || !(sch.shiftIds || []).includes(c.sid) || sch.leave?.[c.sid]) continue;
+      const att = attCache[c.empId] ??= await fs.whereAnd("attendance", { empId: c.empId, date: today });
+      if (att.some(a => a.shiftId === c.sid && a.type === c.type)) continue;
       const msg = c.type === "in"
         ? card(`⏰ ${REMIND_BEFORE} 分鐘後上班`, c.s.name, `上班 ${c.s.start}・下班 ${c.s.end}\n到了記得打上班卡喔！`, "前往打卡", `${LIFF}?view=clock`)
         : card("⚠️ 還沒打下班卡", c.s.name, `下班時間 ${c.s.end} 已過\n請立即打下班卡；超過 1 小時要改用「補打卡」`, "立即打卡", `${LIFF}?view=clock`, "#ff9500");
@@ -410,10 +438,11 @@ async function runReminders(env, manual = false) {
   }
 
   // 2. 新的請假／補打卡申請 → 通知管理者
-  const [pendP, pendL] = await Promise.all([fs.where("punchRequests", "status", "pending"), fs.where("leaveRequests", "status", "pending")]);
-  const newP = pendP.filter(q => !q.notified), newL = pendL.filter(q => !q.notified);
+  // 只查還沒通知過的（notified == false），沒有就只算 1 次讀取
+  const [pendP, pendL] = await Promise.all([fs.whereAnd("punchRequests", { notified: false }), fs.whereAnd("leaveRequests", { notified: false })]);
+  const newP = pendP.filter(q => q.status === "pending"), newL = pendL.filter(q => q.status === "pending");
   if (newP.length || newL.length) {
-    const admins = cacheEmps.filter(e => e.role === "admin" && e.active !== false && String(e.lineUid || "").startsWith("line:"));
+    const admins = Object.values(empBy).filter(e => e.role === "admin" && e.lineUid);
     const lines = [
       ...newL.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}（${(q.shiftNames || []).length} 個班）`),
       ...newP.map(q => `⏱ ${q.name}　${q.date.slice(5)} 補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`)
@@ -421,10 +450,11 @@ async function runReminders(env, manual = false) {
     const title = [newL.length ? `${newL.length} 筆請假` : "", newP.length ? `${newP.length} 筆補打卡` : ""].filter(Boolean).join("、");
     const msg = card(`📝 ${title}待審核`, "簽核中心", lines.slice(0, 8).join("\n") + (lines.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=approvals`);
     for (const a of admins) await push(env, a.lineUid.slice(5), msg).catch(() => {});
-    for (const q of newP) await fs.patchPath(`punchRequests/${q.id}`, { notified: true }).catch(() => {});
-    for (const q of newL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
+
     result.notifiedAdmins = newP.length + newL.length;
   }
+  for (const q of pendP) await fs.patchPath(`punchRequests/${q.id}`, { notified: true }).catch(() => {});
+  for (const q of pendL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
 
   // 3. 審核結果 → 通知員工
   const [doneP, doneL] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo")]);
