@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=37";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=38";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -427,13 +427,16 @@ const loaders = {
   shifts: renderShiftList,
   scheduling: loadSchedulingView,
   report: loadReport,
-  payroll: loadPayroll
+  payroll: loadPayroll,
+  leave: loadLeaveView,
+  approvals: loadApprovals
 };
 const TITLES = {
   clock: "打卡", records: "出勤紀錄", mySchedule: "我的班表", scheduling: "排班作業",
-  report: "出勤報表", employees: "員工管理", shifts: "班別設定", payroll: "薪資計算"
+  report: "出勤報表", employees: "員工管理", shifts: "班別設定", payroll: "薪資計算",
+  leave: "請假", approvals: "簽核中心"
 };
-const ADMIN_VIEWS = ["scheduling", "report", "payroll", "employees", "shifts"];
+const ADMIN_VIEWS = ["approvals", "scheduling", "report", "payroll", "employees", "shifts"];
 function showView(name) {
   $$(".view").forEach(v => v.classList.add("hidden"));
   $(`#view-${name}`).classList.remove("hidden");
@@ -581,7 +584,7 @@ function newMap(L, el) {
 const locFor = (s, type) => locMap[(type === "out" && s?.outLocationId) ? s.outLocationId : s?.locationId];
 
 // ---- 今日班別打卡 ----
-let clockShifts = [], extraShifts = [], todayRecs = [];
+let clockShifts = [], extraShifts = [], todayRecs = [], clockLeave = {};
 let cMap = null, cLayer = null, mapFitted = false;
 const punchIds = () => [...new Set([...clockShifts, ...extraShifts])].filter(id => shiftMap[id])
   .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
@@ -589,7 +592,7 @@ const punchIds = () => [...new Set([...clockShifts, ...extraShifts])].filter(id 
 const CLOCK_KEY = "punch_clock_v1";
 function saveClockCache() {
   try {
-    localStorage.setItem(CLOCK_KEY, JSON.stringify({ date: ymd(new Date()), emp: me.id, shifts: clockShifts,
+    localStorage.setItem(CLOCK_KEY, JSON.stringify({ date: ymd(new Date()), emp: me.id, shifts: clockShifts, leave: clockLeave,
       recs: todayRecs.map(r => ({ type: r.type, shiftId: r.shiftId, t: +r.t, outOfRange: !!r.outOfRange })) }));
   } catch {}
 }
@@ -598,6 +601,7 @@ function renderClockCache() {
     const c = JSON.parse(localStorage.getItem(CLOCK_KEY) || "null");
     if (!c || c.date !== ymd(new Date()) || c.emp !== me?.id) return;
     clockShifts = c.shifts || [];
+    clockLeave = c.leave || {};
     todayRecs = (c.recs || []).map(r => ({ ...r, t: new Date(r.t) }));
     renderPunchCards();
   } catch {}
@@ -608,6 +612,7 @@ async function loadClock() {
   const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${me.id}_${today}`)), loadToday(), loadLocations(),
     loadMyReqs(today.slice(0, 7)).catch(() => {})]);
   clockShifts = sch.exists() ? sch.data().shiftIds || [] : [];
+  clockLeave = sch.exists() ? sch.data().leave || {} : {};
   saveClockCache();
   writeCache();
   mapFitted = false;
@@ -631,6 +636,11 @@ function renderPunchCards() {
   $("#shiftPunch").innerHTML = ids.map(id => {
     const s = shiftMap[id];
     const time = s.start && s.end ? `上班 ${s.start}・下班 ${s.end}` : "";
+    if (clockLeave[id]) {
+      return `<div class="card punch-card leave"><div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
+        <div class="pc-title"><b>${esc(s.name)}</b><span>${s.start && s.end ? `${s.start}–${s.end}・` : ""}已請假，不需打卡</span></div>
+        <span class="pc-pill done">${esc(clockLeave[id])}</span></div></div>`;
+    }
     if (s.cat === "leave") {
       return `<div class="card punch-card leave"><div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
         <div class="pc-title"><b>${esc(s.name)}</b><span>休假，不需打卡</span></div></div></div>`;
@@ -915,7 +925,8 @@ async function loadRecords() {
   rec.month = month;
   rec.recs = attSnap.docs.map(toRec);
   rec.sch = {};
-  schSnap.forEach(d => rec.sch[d.data().date] = d.data().shiftIds || []);
+  rec.leave = {};
+  schSnap.forEach(d => { rec.sch[d.data().date] = d.data().shiftIds || []; rec.leave[d.data().date] = d.data().leave || {}; });
   if (!rec.sel || rec.sel.slice(0, 7) !== month) {
     const t = ymd(new Date());
     rec.sel = t.slice(0, 7) === month ? t : `${month}-01`;
@@ -924,7 +935,7 @@ async function loadRecords() {
   let days = 0, late = 0, miss = 0;
   for (const d of daysOfMonth(month)) {
     const ds = ymd(d);
-    const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave");
+    const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave" && !rec.leave?.[ds]?.[id]);
     if (rec.recs.some(r => r.date === ds)) days++;
     work.forEach(id => {
       const st = shiftPunchState(ds, id, rec.recs);
@@ -940,7 +951,7 @@ async function loadRecords() {
 }
 
 function dayFlag(ds) {
-  const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave");
+  const work = (rec.sch[ds] || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave" && !rec.leave?.[ds]?.[id]);
   const has = rec.recs.some(r => r.date === ds);
   if (!work.length) return has ? "ok" : (rec.sch[ds]?.length ? "leave" : "");
   let bad = false, wait = false, warn = false;
@@ -969,6 +980,7 @@ function renderRecDay() {
   let html = ids.map(id => {
     const st = shiftPunchState(ds, id, rec.recs);
     used.add(id);
+    if (rec.leave?.[ds]?.[id]) return `<div class="rd-group"><div class="rd-shift"><span class="dot" style="background:${esc(st.s.color)}"></span>${esc(st.s.name)}<span class="rd-plan"><span class="tag ok">已請假・${esc(rec.leave[ds][id])}</span></span></div></div>`;
     if (st.s.cat === "leave") return `<div class="rd-group"><div class="rd-shift"><span class="dot" style="background:${esc(st.s.color)}"></span>${esc(st.s.name)}<span class="rd-plan">休假</span></div></div>`;
     const reqBtn = (kind, x) => {
       if (x.r || !x.label.includes("未打卡")) return "";
@@ -1577,6 +1589,9 @@ $("#leaveDefaultBtn").onclick = async () => {
 /* ================= 排班作業（管理者） ================= */
 let selShift = null;
 let schedMap = {}; // `${empId}_${date}` -> shiftIds
+let schedLeave = {}; // `${empId}_${date}` -> { shiftId: 假別 }
+const cellChips = key => (schedMap[key] || []).map(id => schedLeave[key]?.[id]
+  ? chipHtml(id, true).replace('class="chip"', `class="chip lv" title="已請假：${esc(schedLeave[key][id])}"`) : chipHtml(id, true)).join("");
 let roster = {};   // 當月班表設定
 
 const tsMs = t => t?.toMillis ? t.toMillis() : (t instanceof Date ? t.getTime() : 0);
@@ -1603,7 +1618,8 @@ async function loadScheduling() {
     getDoc(doc(db, "rosters", month))
   ]);
   schedMap = {};
-  snap.forEach(d => schedMap[d.id] = d.data().shiftIds || []);
+  schedLeave = {};
+  snap.forEach(d => { schedMap[d.id] = d.data().shiftIds || []; schedLeave[d.id] = d.data().leave || {}; });
 
   const [y, m] = month.split("-");
   roster = { name: `${y}/${+m}月班表`, shiftIds: [], empIds: [], visibility: "self", ...(rSnap.exists() ? rSnap.data() : {}) };
@@ -1661,7 +1677,7 @@ function renderSchedTable(month) {
     html += `<tr><td class="name">${esc(u.name)}<div class="emp-no">${esc(u.empNo || "")}</div></td>`;
     for (const d of days) {
       const key = `${u.id}_${ymd(d)}`;
-      html += `<td class="cell ${wk(d)}" data-key="${key}">${(schedMap[key] || []).map(id => chipHtml(id, true)).join("")}</td>`;
+      html += `<td class="cell ${wk(d)}" data-key="${key}">${cellChips(key)}</td>`;
     }
     html += "</tr>";
   }
@@ -1705,7 +1721,7 @@ function renderDayList(month = $("#schMonth").value) {
     </div>`;
   }).join("");
 }
-const dayChips = key => (schedMap[key] || []).map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
+const dayChips = key => cellChips(key) || `<span class="dr-empty">尚未排班</span>`;
 
 $("#schEmp").onchange = () => renderDayList();
 function stepEmp(d) {
@@ -1988,7 +2004,7 @@ async function saveCell(key, ids, cell) {
     markEdited();
     document.querySelectorAll(`[data-key="${CSS.escape(key)}"]`).forEach(el => {
       if (el.classList.contains("day-row")) el.querySelector(".dr-chips").innerHTML = dayChips(key);
-      else el.innerHTML = ids.map(id => chipHtml(id, true)).join("");
+      else el.innerHTML = cellChips(key);
     });
     renderEmpCounts();
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
@@ -2199,53 +2215,180 @@ function punchDetail(r, kind, plan, ds) {
   return { r, time: t, place, reason: [reason, r.note].filter(Boolean).join("；"), abn, late, early, far: !!r.outOfRange };
 }
 
-async function loadReqReview() {
-  const snap = await getDocs(query(collection(db, "punchRequests"), where("status", "==", "pending")));
-  const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
-  $("#reqCard").classList.toggle("hidden", !list.length);
-  $("#reqCount").textContent = list.length ? `${list.length} 筆待審核` : "";
-  $("#reqList").innerHTML = list.map(q => `<div class="req" data-id="${q.id}">
-    <div class="req-main"><b>${esc(q.name)}</b><span>${dayLabel(q.date)}・${esc(q.shiftName)}</span>
-      <span class="req-what">${q.type === "in" ? "上班" : "下班"} <b>${esc(q.time)}</b>・原因：${esc(q.reason)}</span></div>
-    <div class="req-acts"><button class="btn small danger" data-rq="reject">退回</button><button class="btn small primary" data-rq="ok">核准</button></div>
-  </div>`).join("");
-  pendingReqs = list;
+/* ================= 請假（員工） ================= */
+const LV_ST = { pending: ["warn", "審核中"], approved: ["ok", "已核准"], rejected: ["bad", "已退回"] };
+let lv = { date: null, sch: null, mine: [] };
+
+async function loadLeaveView() {
+  if (!$("#lvDate").value) $("#lvDate").value = ymd(new Date());
+  await Promise.all([loadLvDay(), loadMyLeaves()]);
 }
-let pendingReqs = [];
-$("#reqList").onclick = async e => {
-  const b = e.target.closest("[data-rq]");
-  if (!b) return;
-  const q = pendingReqs.find(x => x.id === b.closest(".req").dataset.id);
-  if (!q) return;
-  b.disabled = true;
+async function loadMyLeaves() {
+  const snap = await getDocs(query(collection(db, "leaveRequests"), where("empId", "==", me.id)));
+  lv.mine = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+  renderMyLeaves();
+  renderLvShifts();
+}
+async function loadLvDay() {
+  lv.date = $("#lvDate").value;
+  $("#lvShifts").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
+  const d = await getDoc(doc(db, "schedules", `${me.id}_${lv.date}`));
+  lv.sch = d.exists() ? d.data() : null;
+  renderLvShifts();
+}
+function renderLvShifts() {
+  if (!lv.date || lv.sch === undefined) return;
+  const ids = (lv.sch?.shiftIds || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave")
+    .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
+  if (!ids.length) { $("#lvShifts").innerHTML = `<p class="empty" style="padding:14px">這天沒有排班</p>`; $("#lvSubmit").disabled = true; return; }
+  const taken = id => lv.sch?.leave?.[id] ? "已請假" : lv.mine.some(q => q.date === lv.date && q.status === "pending" && (q.shiftIds || []).includes(id)) ? "審核中" : "";
+  $("#lvShifts").innerHTML = ids.map((id, i) => {
+    const s = shiftMap[id], t = taken(id);
+    return `<label class="lv-shift ${t ? "taken" : ""}"><input type="checkbox" value="${id}" ${t ? "disabled" : ""}>
+      <span class="lv-no">${i + 1}</span><span class="dot" style="background:${esc(s.color)}"></span>
+      <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span>${t ? `<span class="tag ${t === "已請假" ? "ok" : "warn"}">${t}</span>` : ""}</label>`;
+  }).join("") + (ids.length > 1 ? `<button class="btn link lv-all" id="lvAll">全部勾選</button>` : "");
+  $("#lvSubmit").disabled = false;
+}
+function renderMyLeaves() {
+  $("#lvList").innerHTML = lv.mine.slice(0, 30).map(q => {
+    const [cls, txt] = LV_ST[q.status] || ["", q.status];
+    return `<div class="card lv-item" data-id="${q.id}">
+      <div class="lv-top"><b>${dayLabel(q.date)}</b><span class="tag">${esc(q.leaveType)}</span><span class="tag ${cls}">${txt}</span>
+        ${q.status === "pending" ? `<button class="btn small danger" data-lvcancel>取消</button>` : ""}</div>
+      <div class="lv-shs">${(q.shiftNames || []).map(n => `<span>${esc(n)}</span>`).join("")}</div>
+      ${q.reason ? `<div class="lv-reason">原因：${esc(q.reason)}</div>` : ""}
+      ${q.status === "rejected" && q.rejectNote ? `<div class="lv-reason bad">退回原因：${esc(q.rejectNote)}</div>` : ""}
+    </div>`;
+  }).join("") || `<div class="card empty-card">還沒有請假紀錄</div>`;
+}
+const lvShift = n => { const d = new Date($("#lvDate").value + "T00:00:00"); d.setDate(d.getDate() + n); $("#lvDate").value = ymd(d); loadLvDay(); };
+$("#lvPrev").onclick = () => lvShift(-1);
+$("#lvNext").onclick = () => lvShift(1);
+$("#lvDate").onchange = () => loadLvDay();
+$("#lvType").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) $$("#lvType button").forEach(x => x.classList.toggle("on", x === b)); };
+$("#lvShifts").onclick = e => { if (e.target.id === "lvAll") { e.preventDefault(); $$("#lvShifts input:not(:disabled)").forEach(i => i.checked = true); } };
+$("#lvSubmit").onclick = async () => {
+  const ids = $$("#lvShifts input:checked").map(i => i.value);
+  if (!ids.length) return toast("請勾選要請假的班別");
+  const reason = $("#lvReason").value.trim();
+  const type = $("#lvType button.on")?.dataset.v || "事假";
+  if (!(await appConfirm("送出請假", `${dayLabel(lv.date)}・${type}\n${ids.map(id => shiftMap[id]?.name).join("\n")}`, { okText: "送出" }))) return;
+  $("#lvSubmit").disabled = true;
   try {
-    if (b.dataset.rq === "ok") {
-      const t = new Date(`${q.date}T${q.time}:00`);
-      const batch = writeBatch(db);
-      batch.set(doc(db, "attendance", `mk_${q.id}`), {
-        empId: q.empId, name: q.name, empNo: q.empNo || "", type: q.type,
-        shiftId: q.shiftId || null, shiftName: q.shiftName || "", locationId: null, dist: null,
-        date: q.date, month: q.date.slice(0, 7), ts: t, clientTime: t.toISOString(),
-        lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `補打卡（${q.reason}）`,
-        makeup: true, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
-      });
-      batch.update(doc(db, "punchRequests", q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp() });
-      await batch.commit();
-      toast(`已核准 ${q.name} 的補打卡`);
-    } else {
-      const note = await appDialog({ title: "退回補打卡", message: `${q.name}・${dayLabel(q.date)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`,
-        input: { type: "text", placeholder: "退回原因（選填）" }, buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
-      if (note === false) { b.disabled = false; return; }
-      await updateDoc(doc(db, "punchRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp() });
-      toast("已退回");
-    }
-    await loadReqReview();
-    loadReport();
-  } catch (err) { b.disabled = false; appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+    await addDoc(collection(db, "leaveRequests"), {
+      empId: me.id, name: me.name, empNo: me.empNo || "",
+      date: lv.date, month: lv.date.slice(0, 7), shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""),
+      leaveType: type, reason, status: "pending", createdAt: serverTimestamp()
+    });
+    $("#lvReason").value = "";
+    toast("已送出請假申請，等待管理者審核");
+    loadMyLeaves();
+  } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
+  finally { $("#lvSubmit").disabled = false; }
+};
+$("#lvList").onclick = async e => {
+  if (!e.target.closest("[data-lvcancel]")) return;
+  const id = e.target.closest(".lv-item").dataset.id;
+  if (!(await appConfirm("取消請假", "確定要取消這筆請假申請？", { okText: "取消申請", danger: true }))) return;
+  try { await deleteDoc(doc(db, "leaveRequests", id)); toast("已取消"); loadMyLeaves(); }
+  catch (err) { toast("取消失敗：" + errMsg(err)); }
 };
 
+/* ================= 簽核中心（管理者） ================= */
+let ap = { tab: "leave", leave: [], punch: [] };
+async function fetchPending() {
+  const [l, p] = await Promise.all([
+    getDocs(query(collection(db, "leaveRequests"), where("status", "==", "pending"))),
+    getDocs(query(collection(db, "punchRequests"), where("status", "==", "pending")))
+  ]);
+  ap.leave = l.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
+  ap.punch = p.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
+  setApBadge();
+  return ap.leave.length + ap.punch.length;
+}
+function setApBadge() {
+  const n = ap.leave.length + ap.punch.length;
+  ["#apBadge", "#apBadge2", "#apBadge3"].forEach(sel => { const el = $(sel); if (el) { el.textContent = n; el.classList.toggle("hidden", !n); } });
+  $("#apN1").textContent = ap.leave.length || "";
+  $("#apN2").textContent = ap.punch.length || "";
+}
+async function loadApprovals() {
+  await fetchPending();
+  renderApprovals();
+}
+function renderApprovals() {
+  $$("#apTab button").forEach(b => b.classList.toggle("on", b.dataset.v === ap.tab));
+  const list = ap[ap.tab];
+  $("#apList").innerHTML = list.map(q => ap.tab === "leave" ? `
+    <div class="card ap-item" data-id="${q.id}">
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag">${esc(q.leaveType)}</span></div>
+      <div class="ap-date">${dayLabel(q.date)}・請 ${(q.shiftIds || []).length} 個班</div>
+      <div class="lv-shs">${(q.shiftNames || []).map(n => `<span>${esc(n)}</span>`).join("")}</div>
+      ${q.reason ? `<div class="lv-reason">原因：${esc(q.reason)}</div>` : ""}
+      <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准</button></div>
+    </div>` : `
+    <div class="card ap-item" data-id="${q.id}">
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">補打卡</span></div>
+      <div class="ap-date">${dayLabel(q.date)}・${esc(q.shiftName)}</div>
+      <div class="ap-what">${q.type === "in" ? "上班" : "下班"} <b>${esc(q.time)}</b></div>
+      <div class="lv-reason">原因：${esc(q.reason)}</div>
+      <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准</button></div>
+    </div>`).join("") || `<div class="card empty-card">目前沒有待審核的${ap.tab === "leave" ? "請假" : "補打卡"}申請 🎉</div>`;
+}
+$("#apTab").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { ap.tab = b.dataset.v; renderApprovals(); } };
+$("#apList").onclick = async e => {
+  const b = e.target.closest("[data-ap]");
+  if (!b) return;
+  const q = ap[ap.tab].find(x => x.id === b.closest(".ap-item").dataset.id);
+  if (!q) return;
+  const coll = ap.tab === "leave" ? "leaveRequests" : "punchRequests";
+  const title = ap.tab === "leave" ? `${q.name}・${dayLabel(q.date)} ${q.leaveType}` : `${q.name}・${dayLabel(q.date)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`;
+  try {
+    if (b.dataset.ap === "ok") {
+      b.disabled = true;
+      const batch = writeBatch(db);
+      if (ap.tab === "leave") {
+        const leave = {};
+        (q.shiftIds || []).forEach(id => leave[id] = q.leaveType);
+        batch.set(doc(db, "schedules", `${q.empId}_${q.date}`), { empId: q.empId, date: q.date, month: q.date.slice(0, 7), leave }, { merge: true });
+      } else {
+        const t = new Date(`${q.date}T${q.time}:00`);
+        batch.set(doc(db, "attendance", `mk_${q.id}`), {
+          empId: q.empId, name: q.name, empNo: q.empNo || "", type: q.type,
+          shiftId: q.shiftId || null, shiftName: q.shiftName || "", locationId: null, dist: null,
+          date: q.date, month: q.date.slice(0, 7), ts: t, clientTime: t.toISOString(),
+          lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `補打卡（${q.reason}）`,
+          makeup: true, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
+        });
+      }
+      batch.update(doc(db, coll, q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
+      await batch.commit();
+      toast(`已核准：${title}`);
+    } else {
+      const note = await appDialog({ title: "退回申請", message: title, input: { type: "text", placeholder: "退回原因（選填，員工會看到）" },
+        buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
+      if (note === false) return;
+      await updateDoc(doc(db, coll, q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
+      toast("已退回");
+    }
+    await loadApprovals();
+  } catch (err) { b.disabled = false; appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+};
+// 管理者登入後：有待審核就跳出提示
+let apPrompted = false;
+async function checkPendingOnStart() {
+  if (me?.role !== "admin" || apPrompted) return;
+  apPrompted = true;
+  const n = await fetchPending().catch(() => 0);
+  if (!n) return;
+  const parts = [ap.leave.length ? `請假 ${ap.leave.length} 筆` : "", ap.punch.length ? `補打卡 ${ap.punch.length} 筆` : ""].filter(Boolean).join("、");
+  const go = await appDialog({ title: "有申請待審核", message: parts, buttons: [{ text: "稍後", value: false }, { text: "前往審核", value: true, style: "primary" }] });
+  if (go) { ap.tab = ap.leave.length ? "leave" : "punch"; showView("approvals"); }
+}
+authReady.then(() => setTimeout(checkPendingOnStart, 800));
+
 async function loadReport() {
-  loadReqReview().catch(err => console.warn("補打卡申請讀取失敗", err));
   const month = $("#repMonth").value;
   await Promise.all([loadEmployees(), loadShiftTypes(), loadLocations()]);
   const [attSnap, schSnap] = await Promise.all([
@@ -2254,7 +2397,8 @@ async function loadReport() {
   ]);
   const recs = attSnap.docs.map(toRec);
   const sch = {};
-  schSnap.forEach(d => sch[d.id] = d.data().shiftIds || []);
+  const lvMap = {};
+  schSnap.forEach(d => { sch[d.id] = d.data().shiftIds || []; lvMap[d.id] = d.data().leave || {}; });
 
   const cur = $("#repEmp").value;
   $("#repEmp").innerHTML = `<option value="">全部員工</option>` +
@@ -2281,7 +2425,14 @@ async function loadReport() {
         const hrs = inD.r && outD.r && outD.r.t > inD.r.t ? (outD.r.t - inD.r.t) / 36e5 : null;
         reportRows.push({ u, date: ds, s, sid, inD, outD, hrs });
       };
-      ids.forEach(id => { used.add(id); addRow(id, dayRecs.filter(r => r.shiftId === id)); });
+      ids.forEach(id => {
+        used.add(id);
+        const lt = lvMap[key]?.[id];
+        if (lt && !dayRecs.some(r => r.shiftId === id)) {
+          const L = { time: "", place: "", reason: "", abn: "", leave: lt };
+          reportRows.push({ u, date: ds, s: shiftMap[id], sid: id, inD: L, outD: L, hrs: null, leave: lt });
+        } else addRow(id, dayRecs.filter(r => r.shiftId === id));
+      });
       // 沒有對應排班的打卡（臨時班別或舊紀錄）
       const extra = {};
       dayRecs.filter(r => !used.has(r.shiftId)).forEach(r => (extra[r.shiftId || ""] ??= []).push(r));
@@ -2324,7 +2475,7 @@ function renderReport() {
     || `<tr><td colspan="8" class="empty">本月沒有資料</td></tr>`;
 
   $("#repCount").textContent = `共 ${rows.length} 筆`;
-  const cell = (x, cls, k) => `
+  const cell = (x, cls, k) => x.leave ? `<td class="${cls}" colspan="5" data-label="${k}"><span class="tag ok">請假・${esc(x.leave)}</span></td>` : `
     <td class="${cls} t" data-label="${k}時間">${x.time || "—"}</td>
     <td class="${cls}" data-label="${k}打卡地點">${x.place || "—"}</td>
     <td class="${cls}" data-label="${k}查看地點">${x.r?.lat != null ? `<a href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">查看地點</a>` : "—"}</td>
@@ -2334,7 +2485,7 @@ function renderReport() {
     <tr class="${isAbn(r) ? "abn" : ""}">
       <td>${esc(r.u.empNo)}</td><td>${esc(r.u.name)}</td><td>${dayLabel(r.date)}</td>
       <td>${r.s ? chipHtml(r.sid) : `<span class="tag">${esc(r.inD.r?.shiftName || r.outD.r?.shiftName || "未指定班別")}</span>`}</td>
-      ${cell(r.inD, "g-in", "上班")}${cell(r.outD, "g-out", "下班")}
+      ${r.leave ? `<td colspan="10" data-label="出勤"><span class="tag ok">請假・${esc(r.leave)}</span></td>` : cell(r.inD, "g-in", "上班") + cell(r.outD, "g-out", "下班")}
       <td>${r.hrs ? r.hrs.toFixed(2) : "—"}</td>
     </tr>`).join("") || `<tr><td colspan="15" class="empty">沒有符合的紀錄</td></tr>`;
 }
@@ -2403,7 +2554,7 @@ async function loadPayroll() {
     (x.shiftIds || []).forEach(sid => {
       const k = `${x.empId}_${x.date}_${sid}`;
       seen.add(k);
-      items.push({ key: k, empId: x.empId, date: x.date, sid, recs: byKey[k] || [] });
+      items.push({ key: k, empId: x.empId, date: x.date, sid, recs: byKey[k] || [], leave: x.leave?.[sid] });
     });
   });
   // 沒排班但有打卡的班（臨時班別）
@@ -2415,7 +2566,7 @@ async function loadPayroll() {
   pay.items = items.map(it => {
     const s = shiftMap[it.sid];
     const hasIn = it.recs.some(r => r.type === "in"), hasOut = it.recs.some(r => r.type === "out");
-    let auto = s?.cat === "leave" || /假/.test(s?.name || it.sname || "") ? "leave"
+    let auto = it.leave || s?.cat === "leave" || /假/.test(s?.name || it.sname || "") ? "leave"
       : hasIn && hasOut ? "ok" : hasIn || hasOut ? "forgot"
       : it.date < today ? "missing" : "future";
     const st = pay.cfg.overrides[it.key] || auto;

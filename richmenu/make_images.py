@@ -35,6 +35,13 @@ def icon(d,kind,cx,cy,s,col,w):
     elif kind=="tag":
         pts=[(cx-r,cy-r),(cx+r*.1,cy-r),(cx+r,cy-r*.1),(cx-r*.1,cy+r),(cx-r,cy+r*.1),(cx-r,cy-r)]; L(pts)
         d.ellipse([cx-r*.55-w*.7,cy-r*.55-w*.7,cx-r*.55+w*.7,cy-r*.55+w*.7],fill=col)
+    elif kind=="leave":
+        rr(cx-r,cy-r*.8,cx+r,cy+r,s*.12); L([(cx-r,cy-r*.25),(cx+r,cy-r*.25)])
+        L([(cx-r*.45,cy-r*1.05),(cx-r*.45,cy-r*.55)]); L([(cx+r*.45,cy-r*1.05),(cx+r*.45,cy-r*.55)])
+        L([(cx-r*.4,cy+r*.4),(cx+r*.4,cy+r*.4)])
+    elif kind=="check":
+        L([(cx-r*.45,cy-r*.05),(cx-r*.05,cy+r*.35),(cx+r*.95,cy-r*.75)])
+        d.arc([cx-r,cy-r,cx+r,cy+r],40,330,fill=col,width=w)
     elif kind=="team":
         rr(cx-r,cy-r*.8,cx+r,cy+r,s*.12); L([(cx-r,cy-r*.25),(cx+r,cy-r*.25)])
         for i,x in enumerate([-.45,.15]):
@@ -55,7 +62,7 @@ def header(d,mode):
         center(d,t,x0+W/4,HD/2-6,f(BOLD,92),BLUE if on else MUT)
         if on: d.rounded_rectangle([x0+W/4-130,HD-26,x0+W/4+130,HD-10],radius=8,fill=BLUE)
 
-def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False):
+def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False,row=False):
     m=18
     if big:
         g=Image.new("RGB",(int(x1-x0-2*m),int(y1-y0-2*m)))
@@ -70,6 +77,12 @@ def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False):
         center(d,sub,cx,cy+290,f(MED,62),(220,236,255)); return
     d.rounded_rectangle([x0+m,y0+m,x1-m,y1-m],radius=50,fill=(255,255,255))
     cx=(x0+x1)/2; cy=(y0+y1)/2
+    if row:   # 橫式：圖示在左、文字在右
+        ix=x0+190
+        d.rounded_rectangle([ix-95,cy-95,ix+95,cy+95],radius=50,fill=TINT)
+        icon(d,kind,ix,cy,110,BLUE,14)
+        tf=f(BOLD,84); d.text((ix+150,cy-62),title,font=tf,fill=TXT,anchor="lm")
+        d.text((ix+152,cy+48),sub,font=f(MED,50),fill=MUT,anchor="lm"); return
     s=min(x1-x0,y1-y0)
     d.rounded_rectangle([cx-115,cy-215,cx+115,cy+15],radius=60,fill=TINT)
     icon(d,kind,cx,cy-100,130,BLUE,16)
@@ -79,14 +92,16 @@ def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False):
 def emp(mode,name):
     img=Image.new("RGB",(W,H),BG); d=ImageDraw.Draw(img); header(d,mode)
     tile(img,d,0,HD,W/2,H,"clock","我要打卡","上班・下班打卡",big=True)
-    tile(img,d,W/2,HD,W,HD+(H-HD)/2,"list","出勤紀錄","打卡與異常")
-    tile(img,d,W/2,HD+(H-HD)/2,W,H,"cal","我的班表","月曆・週明細")
+    t=(H-HD)/3
+    tile(img,d,W/2,HD,W,HD+t,"list","出勤紀錄","打卡與異常",row=True)
+    tile(img,d,W/2,HD+t,W,HD+2*t,"cal","我的班表","月曆・週明細",row=True)
+    tile(img,d,W/2,HD+2*t,W,H,"leave","我要請假","選班別請假",row=True)
     img.save(OUT+name,optimize=True)
 
 def admin(name):
     img=Image.new("RGB",(W,H),BG); d=ImageDraw.Draw(img); header(d,"admin")
-    items=[("grid","排班作業","每月班表"),("chart","出勤報表","打卡細項"),("money","薪資計算","當月薪資"),
-           ("users","員工管理","人員・綁定"),("tag","班別設定","班別・地點"),("team","團隊班表","全部人班表")]
+    items=[("check","簽核中心","請假・補打卡"),("grid","排班作業","每月班表"),("chart","出勤報表","打卡細項"),
+           ("money","薪資計算","當月薪資"),("users","員工管理","人員・綁定"),("tag","班別設定","班別・地點")]
     cw=W/3; ch=(H-HD)/2
     for i,(k,t,s) in enumerate(items):
         x=(i%3)*cw; y=HD+(i//3)*ch; tile(img,d,x,y,x+cw,y+ch,k,t,s)

@@ -687,3 +687,39 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 .pl.far i{background:var(--red)} .pl.far em{color:var(--red)}
 .pl.wait i{background:var(--orange);animation:pulse 1.2s infinite}
 .pl.done span,.pl.done b{color:var(--muted)} .pl.done em{color:var(--green-d)}
+
+/* ---------- 請假、簽核中心 ---------- */
+.chip.lv{opacity:.45;text-decoration:line-through}
+.nav-badge,.tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:700;margin-left:auto}
+.sidebar a.active .nav-badge{background:#fff;color:var(--primary)}
+.tabbar a{position:relative}
+.tabbar .tab-badge{position:absolute;top:6px;left:calc(50% + 6px);margin:0}
+.sheet-grid a{position:relative}
+.sheet-grid .tab-badge{position:absolute;top:8px;right:8px;margin:0}
+.lv-label{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px}
+#view-leave .field + .field{margin-top:18px}
+.lv-date{display:flex;gap:8px;align-items:center}
+.lv-date input{flex:1;text-align:center;font-weight:600;font-size:16px}
+.lv-shifts{display:flex;flex-direction:column;gap:8px}
+.lv-shift{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--fill);cursor:pointer;transition:background .15s}
+.lv-shift:has(input:checked){background:var(--primary-l);box-shadow:inset 0 0 0 2px var(--primary)}
+.lv-shift.taken{opacity:.6;cursor:default}
+.lv-no{width:22px;height:22px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted);flex-shrink:0}
+.lv-name{flex:1;min-width:0;font-weight:600;font-size:14.5px;display:flex;flex-direction:column}
+.lv-name small{font-weight:400;color:var(--muted);font-size:12.5px}
+.lv-all{align-self:flex-start;font-size:13.5px}
+.lv-types button{padding:0 6px}
+.lv-submit{width:100%;height:48px;font-size:16px;margin-top:18px;border-radius:12px}
+.lv-item,.ap-item{padding:16px 18px}
+.lv-top,.ap-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lv-top b,.ap-head b{font-size:15.5px}
+.lv-top .btn{margin-left:auto}
+.lv-shs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.lv-shs span{background:var(--fill);border-radius:8px;padding:4px 10px;font-size:13px}
+.lv-reason{margin-top:10px;font-size:13.5px;color:var(--text-2)}
+.lv-reason.bad{color:var(--red)}
+.ap-date{margin-top:6px;color:var(--text-2);font-size:14px}
+.ap-what{margin-top:6px;font-size:15px}
+.ap-acts{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:14px}
+.ap-acts .btn{height:42px;font-size:15px}
+@media (max-width:768px){ .lv-types button{font-size:13px} }

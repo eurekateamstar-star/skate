@@ -56,6 +56,16 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // 請假申請：員工送出、可取消審核中的；管理者審核
+    match /leaveRequests/{id} {
+      allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow create: if bound()
+                    && request.resource.data.empId == myEmpId()
+                    && request.resource.data.status == 'pending';
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending');
+    }
+
     // 薪資：只有管理者能讀寫
     match /payRates/{id} {
       allow read, write: if isAdmin();
