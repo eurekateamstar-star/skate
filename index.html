@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=43">
+  <link rel="stylesheet" href="style.css?v=45">
 </head>
 <body>
 
@@ -95,6 +95,7 @@
       <a data-view="records"><svg class="ic"><use href="#i-list"/></svg>出勤紀錄</a>
       <a data-view="mySchedule"><svg class="ic"><use href="#i-cal"/></svg>我的班表</a>
       <a data-view="leave"><svg class="ic"><use href="#i-leave"/></svg>請假</a>
+      <a data-view="mypay"><svg class="ic"><use href="#i-money"/></svg>我的薪資</a>
       <div class="admin-only hidden">
         <div class="nav-title">管理者專區</div>
         <a data-view="approvals"><svg class="ic"><use href="#i-check"/></svg>簽核中心<span class="nav-badge hidden" id="apBadge"></span></a>
@@ -153,6 +154,18 @@
           <div class="vh-actions"><div class="seg" id="apTab"><button data-v="leave" class="on">請假 <span id="apN1"></span></button><button data-v="punch">補打卡 <span id="apN2"></span></button><button data-v="done">已核准</button></div></div>
         </div>
         <div id="apList"></div>
+      </section>
+
+      <!-- 我的薪資 -->
+      <section id="view-mypay" class="view hidden">
+        <div class="view-head">
+          <div class="vh-title"><h2>我的薪資</h2><div class="vh-sub">核對這個月的打卡明細；管理者結算發布後會顯示薪資</div></div>
+          <div class="vh-actions"><input type="month" id="mpMonth"></div>
+        </div>
+        <div class="card mp-pay" id="mpPay"></div>
+        <div class="card mp-confirm" id="mpConfirm"></div>
+        <div class="rd-title" id="mpListTitle">打卡明細</div>
+        <div class="card mp-list" id="mpList"></div>
       </section>
 
       <!-- 出勤紀錄 -->
@@ -347,6 +360,7 @@
               <label class="sw"><input type="checkbox" id="payMissing"><span></span>未打卡（上下班都沒打）照算薪資</label>
             </div>
             <div class="pf-row">
+              <button class="btn primary" id="payPublish">發布薪資</button>
               <select id="payStatus">
                 <option value="">全部狀態</option>
                 <option value="ok">正常</option>
@@ -483,6 +497,7 @@
     <a data-view="records"><svg class="ic"><use href="#i-list"/></svg><span>紀錄</span></a>
     <a data-view="mySchedule"><svg class="ic"><use href="#i-cal"/></svg><span>班表</span></a>
     <a data-view="leave"><svg class="ic"><use href="#i-leave"/></svg><span>請假</span></a>
+    <a data-view="mypay"><svg class="ic"><use href="#i-money"/></svg><span>薪資</span></a>
     <a class="admin-only hidden" id="moreBtn"><svg class="ic"><use href="#i-apps"/></svg><span>管理</span><span class="tab-badge hidden" id="apBadge2"></span></a>
   </nav>
 
@@ -643,6 +658,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=43"></script>
+<script type="module" src="app.js?v=45"></script>
 </body>
 </html>

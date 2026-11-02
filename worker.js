@@ -457,7 +457,16 @@ async function runReminders(env, manual = false) {
   for (const q of pendL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
 
   // 3. 審核結果 → 通知員工
-  const [doneP, doneL] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo")]);
+  const [doneP, doneL, doneS] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo"), fs.where("payslips", "notifyEmp", "todo")]);
+  // 薪資發布 → 通知員工
+  for (const q of doneS) {
+    const e = empBy[q.empId];
+    if (e?.lineUid) {
+      const [y, m] = String(q.month || "").split("-");
+      await push(env, e.lineUid.slice(5), card(`💰 ${y}年${+m}月薪資已結算`, "我的薪資", `應發金額 $${Math.round(q.total || 0).toLocaleString("en-US")}\n點下方查看每個班別的明細`, "查看薪資", `${LIFF}?view=mypay`, "#34c759")).catch(() => {});
+    }
+    await fs.patchPath(`payslips/${q.id}`, { notifyEmp: "done" }).catch(() => {});
+  }
   for (const [coll, list] of [["punchRequests", doneP], ["leaveRequests", doneL]]) {
     for (const q of list) {
       const e = empBy[q.empId];

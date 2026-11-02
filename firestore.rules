@@ -82,6 +82,25 @@ service cloud.firestore {
       allow delete: if isAdmin() || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending');
     }
 
+    // 發布的薪資單：員工只能看自己的，管理者發布
+    match /payslips/{id} {
+      allow get: if isAdmin() || (bound() && (resource == null || resource.data.empId == myEmpId()));
+      allow list: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || seenOnly();
+    }
+
+    // 員工確認打卡明細（確認無誤／有問題）
+    match /payConfirm/{id} {
+      allow get: if isAdmin() || (bound() && (resource == null || resource.data.empId == myEmpId()));
+      allow list: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow create, update: if isAdmin()
+                    || (bound() && request.resource.data.empId == myEmpId()
+                        && id == request.resource.data.month + '_' + myEmpId()
+                        && request.resource.data.status in ['ok', 'issue']);
+      allow delete: if isAdmin();
+    }
+
     // 薪資：只有管理者能讀寫
     match /payRates/{id} {
       allow read, write: if isAdmin();

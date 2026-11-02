@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=43";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=45";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -429,13 +429,14 @@ const loaders = {
   scheduling: loadSchedulingView,
   report: loadReport,
   payroll: loadPayroll,
+  mypay: loadMyPay,
   leave: loadLeaveView,
   approvals: loadApprovals
 };
 const TITLES = {
   clock: "打卡", records: "出勤紀錄", mySchedule: "我的班表", scheduling: "排班作業",
   report: "出勤報表", employees: "員工管理", shifts: "班別設定", payroll: "薪資計算",
-  leave: "請假", approvals: "簽核中心"
+  leave: "請假", approvals: "簽核中心", mypay: "我的薪資"
 };
 const ADMIN_VIEWS = ["approvals", "scheduling", "report", "payroll", "employees", "shifts"];
 function showView(name) {
@@ -473,7 +474,7 @@ new MutationObserver(muts => {
 }).observe(document.body, { childList: true, subtree: true });
 
 const thisMonth = ym(new Date());
-["#recMonth", "#mySchMonth", "#schMonth", "#repMonth", "#payMonth"].forEach(s => $(s).value = thisMonth);
+["#recMonth", "#mySchMonth", "#schMonth", "#repMonth", "#payMonth", "#mpMonth"].forEach(s => $(s).value = thisMonth);
 $("#recMonth").onchange = () => loadRecords();
 $("#mySchMonth").onchange = () => loadMySchedule();
 $("#schMonth").onchange = () => loadScheduling();
@@ -2728,9 +2729,12 @@ async function showMyResults() {
   ]);
   const pick = (snap, coll) => snap.docs.map(d => ({ id: d.id, coll, ...d.data() }))
     .filter(q => q.status !== "pending" && q.seenByEmp === false && q.date >= since);
-  const list = [...pick(l, "leaveRequests"), ...pick(p, "punchRequests")].sort((a, b) => a.date.localeCompare(b.date));
+  const sl = await getDocs(query(collection(db, "payslips"), where("empId", "==", me.id))).catch(() => null);
+  const slips = (sl?.docs || []).map(d => ({ id: d.id, coll: "payslips", date: d.data().month + "-01", ...d.data() })).filter(q => q.seenByEmp === false);
+  const list = [...pick(l, "leaveRequests"), ...pick(p, "punchRequests"), ...slips].sort((a, b) => a.date.localeCompare(b.date));
   if (!list.length) return;
   const line = q => {
+    if (q.coll === "payslips") { const [y, m] = q.month.split("-"); return `💰 ${y}年${+m}月薪資已結算\n${money(q.total)}（到「我的薪資」看明細）`; }
     if (q.coll === "punchRequests") return `${q.status === "approved" ? "✅ 補打卡已核准" : "❌ 補打卡被退回"}\n${dayLabel(q.date)} ${q.shiftName || ""}・${q.type === "in" ? "上班" : "下班"} ${q.time}` + (q.status === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "");
     const head = q.status === "revoked" ? "↩️ 請假已撤銷" : q.status === "rejected" ? "❌ 請假被退回" : q.notifyKind === "edited" ? "✏️ 請假已被修改" : "✅ 請假審核通過";
     return `${head}\n${dayLabel(q.date)} ${q.leaveType}・${(q.shiftNames || []).join("、")}`
@@ -2738,7 +2742,7 @@ async function showMyResults() {
       + (q.status === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "")
       + (q.status === "revoked" ? "\n請照原班表上班" : "");
   };
-  const allOk = list.every(q => q.status === "approved");
+  const allOk = list.every(q => q.status === "approved" || q.coll === "payslips");
   await appDialog({ title: list.length > 1 ? `你有 ${list.length} 筆申請有結果` : allOk ? "審核通過" : "申請結果", message: list.map(line).join("\n\n"),
     buttons: [{ text: "知道了", value: true, style: "primary" }] });
   await Promise.all(list.map(q => updateDoc(doc(db, q.coll, q.id), { seenByEmp: true }).catch(() => {})));
@@ -2894,11 +2898,15 @@ async function loadPayroll() {
   $("#payMonth").classList.toggle("hidden", pay.tab !== "month");
   if (pay.tab === "rates") return renderRates();
 
-  const [attSnap, schSnap, cfgSnap] = await Promise.all([
+  const [attSnap, schSnap, cfgSnap, confSnap, slipSnap] = await Promise.all([
     getDocs(query(collection(db, "attendance"), where("month", "==", month))),
     getDocs(query(collection(db, "schedules"), where("month", "==", month))),
-    getDoc(doc(db, "payroll", month))
+    getDoc(doc(db, "payroll", month)),
+    getDocs(query(collection(db, "payConfirm"), where("month", "==", month))).catch(() => null),
+    getDocs(query(collection(db, "payslips"), where("month", "==", month))).catch(() => null)
   ]);
+  pay.conf = {}; confSnap?.forEach(d => pay.conf[d.data().empId] = d.data());
+  pay.slips = {}; slipSnap?.forEach(d => pay.slips[d.data().empId] = d.data());
   pay.month = month;
   pay.cfg = { empIds: null, overrides: {}, adjust: {}, payForgot: true, payMissing: false, ...(cfgSnap.exists() ? cfgSnap.data() : {}) };
   $("#payForgot").checked = pay.cfg.payForgot !== false;
@@ -2987,7 +2995,7 @@ function renderPayroll() {
   $("#payList").innerHTML = rows.map(c => {
     const open = pay.open.has(c.u.id);
     const tags = [c.forgot ? `<span class="tag warn">忘記打卡 ${c.forgot}</span>` : "", c.missing ? `<span class="tag bad">未打卡 ${c.missing}</span>` : "",
-      c.leave ? `<span class="tag">請假/未上班 ${c.leave}</span>` : "", c.noRate ? `<span class="tag bad">${c.noRate} 個班別沒設單價</span>` : ""].join("");
+      c.leave ? `<span class="tag">請假/未上班 ${c.leave}</span>` : "", c.noRate ? `<span class="tag bad">${c.noRate} 個班別沒設單價</span>` : ""].join("") + payStateTags(c);
     let detail = "";
     if (open) {
       const inst = c.list.filter(it => !stF || it.st === stF || (stF === "leave" && it.st === "absent"));
@@ -3002,6 +3010,8 @@ function renderPayroll() {
           <label>扣款<input type="number" data-adj="deduct" value="${c.adj.deduct || ""}" placeholder="0"></label>
           <label class="grow">備註<input data-adj="note" value="${esc(c.adj.note || "")}" placeholder="例：交通補貼、獎金"></label>
         </div>
+        ${pay.conf[c.u.id]?.status === "issue" ? `<div class="pay-issue">員工回報有問題：${esc(pay.conf[c.u.id].note || "（未填說明）")}</div>` : ""}
+        ${pay.slips[c.u.id] ? `<div class="pay-pubrow">已發布 ${money(pay.slips[c.u.id].total)}・${fmtTs(pay.slips[c.u.id].publishedAt)}<button class="btn small danger" data-unpub>取消發布</button></div>` : ""}
         <div class="inst-head">每堂明細 <span>（可手動改狀態，例如補請假）</span></div>
         <div class="inst-list">${inst.map(it => `<div class="inst">
           <span class="inst-date">${dayLabel(it.date)}</span>
@@ -3066,6 +3076,135 @@ $("#payList").onchange = e => {
     savePayCfg({ adjust });
     renderPayroll();
   }
+};
+
+const fmtTs = t => { const d = t?.toDate ? t.toDate() : t ? new Date(t) : null; return d ? `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}` : ""; };
+function payStateTags(c) {
+  const cf = pay.conf?.[c.u.id], sl = pay.slips?.[c.u.id];
+  const conf = cf?.status === "ok" ? `<span class="tag ok">員工已確認</span>` : cf?.status === "issue" ? `<span class="tag bad">員工有疑問</span>` : `<span class="tag muted">員工未確認</span>`;
+  const pub = !sl ? "" : Math.round(sl.total) === Math.round(c.total) ? `<span class="tag ok">已發布</span>` : `<span class="tag warn">已改動，需重新發布</span>`;
+  return conf + pub;
+}
+function slipOf(c) {
+  return {
+    empId: c.u.id, name: c.u.name || "", empNo: c.u.empNo || "", month: pay.month,
+    total: c.total, base: c.base, bonus: +c.adj.bonus || 0, deduct: +c.adj.deduct || 0, note: c.adj.note || "",
+    groups: c.groups.filter(g => g.paidN || g.n.ok || g.n.forgot || g.n.missing).map(g => ({ name: g.name, paidN: g.paidN, rate: g.rate, sub: g.sub })),
+    items: c.list.map(it => ({ key: `${it.date}_${it.sid || it.name}`, date: it.date, name: it.name, st: it.st, paid: paid(it.st) })),
+    publishedAt: serverTimestamp(), publishedBy: me.name, notifyEmp: "todo", seenByEmp: false
+  };
+}
+$("#payPublish").onclick = async () => {
+  const rows = selectedEmps().map(calcEmp);
+  if (!rows.length) return toast("沒有計薪人員");
+  const [y, m] = pay.month.split("-");
+  const noConf = rows.filter(c => pay.conf?.[c.u.id]?.status !== "ok").length;
+  const issue = rows.filter(c => pay.conf?.[c.u.id]?.status === "issue").map(c => c.u.name);
+  const msg = `${y}年${+m}月・${rows.length} 人・合計 ${money(rows.reduce((a, c) => a + c.total, 0))}`
+    + (issue.length ? `\n\n⚠️ 有疑問未處理：${issue.join("、")}` : "")
+    + (noConf ? `\n${noConf} 人還沒確認打卡明細` : "")
+    + `\n\n發布後員工會在「我的薪資」看到，並收到 LINE 通知。已發布的會用最新金額覆蓋。`;
+  if (!(await appConfirm("發布薪資", msg, { okText: "發布" }))) return;
+  try {
+    const batch = writeBatch(db);
+    rows.forEach(c => batch.set(doc(db, "payslips", `${pay.month}_${c.u.id}`), slipOf(c)));
+    await batch.commit();
+    toast(`已發布 ${rows.length} 人的薪資`);
+    loadPayroll();
+  } catch (err) { appAlert("發布失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+};
+$("#payList").addEventListener("click", async e => {
+  if (!e.target.closest("[data-unpub]")) return;
+  const id = e.target.closest(".pay-card").dataset.eid;
+  if (!(await appConfirm("取消發布", "員工將看不到這個月的薪資（顯示未結算）。", { okText: "取消發布", danger: true }))) return;
+  try { await deleteDoc(doc(db, "payslips", `${pay.month}_${id}`)); toast("已取消發布"); loadPayroll(); }
+  catch (err) { toast("失敗：" + errMsg(err)); }
+});
+
+/* ================= 我的薪資（員工） ================= */
+const MP_ST = { ok: ["ok", "正常"], forgot: ["warn", "忘記打卡"], missing: ["bad", "未打卡"], leave: ["", "請假"], absent: ["", "未上班"], future: ["muted", "未到"] };
+let mp = { month: null };
+async function loadMyPay() {
+  const month = $("#mpMonth").value;
+  mp.month = month;
+  $("#mpPay").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
+  const [att, sch, slip, conf] = await Promise.all([
+    getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("month", "==", month))),
+    getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month))),
+    getDoc(doc(db, "payslips", `${month}_${me.id}`)).catch(() => null),
+    getDoc(doc(db, "payConfirm", `${month}_${me.id}`)).catch(() => null)
+  ]);
+  if (month !== mp.month) return;
+  const recs = att.docs.map(toRec);
+  const byKey = {};
+  recs.forEach(r => (byKey[`${r.date}_${r.shiftId || r.shiftName || ""}`] ??= []).push(r));
+  const today = ymd(new Date()), items = [], seen = new Set();
+  sch.forEach(d => {
+    const x = d.data();
+    (x.shiftIds || []).forEach(sid => {
+      const k = `${x.date}_${sid}`; seen.add(k);
+      items.push({ key: k, date: x.date, sid, s: shiftMap[sid], recs: byKey[k] || [], leave: x.leave?.[sid] });
+    });
+  });
+  Object.entries(byKey).forEach(([k, list]) => { if (!seen.has(k)) items.push({ key: k, date: list[0].date, sid: list[0].shiftId, s: shiftMap[list[0].shiftId], sname: list[0].shiftName, recs: list }); });
+  mp.slip = slip?.exists() ? slip.data() : null;
+  mp.conf = conf?.exists() ? conf.data() : null;
+  const slipSt = Object.fromEntries((mp.slip?.items || []).map(i => [i.key, i.st]));
+  mp.items = items.map(it => {
+    const ins = it.recs.filter(r => r.type === "in").sort((a, b) => a.t - b.t), outs = it.recs.filter(r => r.type === "out").sort((a, b) => b.t - a.t);
+    const auto = it.leave || it.s?.cat === "leave" ? "leave" : ins.length && outs.length ? "ok" : ins.length || outs.length ? "forgot" : it.date < today ? "missing" : "future";
+    return { ...it, name: it.s?.name || it.sname || "未指定班別", inT: ins[0] ? hm(ins[0].t) : "", outT: outs[0] ? hm(outs[0].t) : "", st: slipSt[it.key] || auto };
+  }).sort((a, b) => a.date.localeCompare(b.date) || (a.s?.start || "").localeCompare(b.s?.start || ""));
+  renderMyPay();
+}
+function renderMyPay() {
+  const [y, m] = mp.month.split("-");
+  const sl = mp.slip;
+  $("#mpPay").innerHTML = sl ? `
+    <div class="mp-head"><span>${y}年${+m}月 薪資</span><span class="tag ok">已結算</span></div>
+    <div class="mp-total">${money(sl.total)}</div>
+    <table class="mp-tbl"><thead><tr><th>班別</th><th>堂數</th><th>單價</th><th>小計</th></tr></thead><tbody>
+      ${(sl.groups || []).map(g => `<tr><td>${esc(g.name)}</td><td>${g.paidN}</td><td>${g.rate ? money(g.rate) : "—"}</td><td>${money(g.sub)}</td></tr>`).join("")}
+      ${sl.bonus ? `<tr class="adj"><td colspan="3">加給${sl.note ? `（${esc(sl.note)}）` : ""}</td><td>+${money(sl.bonus)}</td></tr>` : ""}
+      ${sl.deduct ? `<tr class="adj"><td colspan="3">扣款${!sl.bonus && sl.note ? `（${esc(sl.note)}）` : ""}</td><td>−${money(sl.deduct)}</td></tr>` : ""}
+    </tbody></table>
+    <div class="mp-foot">發布時間 ${fmtTs(sl.publishedAt)}</div>` : `
+    <div class="mp-head"><span>${y}年${+m}月 薪資</span><span class="tag muted">未結算</span></div>
+    <div class="mp-total none">未結算薪資</div>
+    <p class="hint" style="margin:6px 0 0">請先核對下方打卡明細並按「確認無誤」，管理者結算發布後會顯示金額。</p>`;
+  const cf = mp.conf;
+  const n = st => mp.items.filter(i => i.st === st).length;
+  $("#mpConfirm").innerHTML = `
+    <div class="mp-stats"><span><b>${mp.items.filter(i => i.st !== "future").length}</b>堂</span><span><b>${n("ok")}</b>正常</span>
+      <span class="${n("forgot") ? "o" : ""}"><b>${n("forgot")}</b>忘記打卡</span><span class="${n("missing") ? "r" : ""}"><b>${n("missing")}</b>未打卡</span><span><b>${n("leave")}</b>請假</span></div>
+    ${cf?.status === "ok" ? `<div class="mp-cf ok">✅ 你已在 ${fmtTs(cf.at)} 確認打卡明細無誤<button class="btn link" data-mp="issue">改成有問題</button></div>`
+      : cf?.status === "issue" ? `<div class="mp-cf bad">❗ 已回報有問題：${esc(cf.note || "")}<button class="btn link" data-mp="ok">改成確認無誤</button><button class="btn link" data-mp="issue">修改說明</button></div>`
+      : `<div class="mp-acts"><button class="btn" data-mp="issue">有問題</button><button class="btn primary" data-mp="ok">確認無誤</button></div>`}`;
+  $("#mpListTitle").textContent = `打卡明細（${mp.items.length} 堂）`;
+  $("#mpList").innerHTML = mp.items.map(it => {
+    const [cls, txt] = MP_ST[it.st] || ["", it.st];
+    return `<div class="mp-row ${it.st === "future" ? "fut" : ""}">
+      <span class="mp-date">${dayLabel(it.date)}</span>
+      <span class="mp-name"><i class="dot" style="background:${esc(it.s?.color || "#9aa0a6")}"></i>${esc(it.name)}</span>
+      <span class="mp-t">${it.st === "leave" ? "—" : `${it.inT || "--:--"} → ${it.outT || "--:--"}`}</span>
+      <span class="tag ${cls}">${txt}</span></div>`;
+  }).join("") || `<p class="empty" style="padding:16px">這個月沒有排班或打卡紀錄</p>`;
+}
+$("#mpMonth").onchange = () => loadMyPay();
+$("#mpConfirm").onclick = async e => {
+  const b = e.target.closest("[data-mp]"); if (!b) return;
+  let note = "";
+  if (b.dataset.mp === "issue") {
+    note = await appDialog({ title: "回報有問題", message: "說明哪一天、哪個班有問題，管理者會幫你確認", input: { type: "text", placeholder: "例：11/5 下午班有上但沒打到卡", value: mp.conf?.note || "" },
+      buttons: [{ text: "取消", value: false }, { text: "送出", value: true, style: "primary" }] });
+    if (note === false) return;
+    if (!note.trim()) return toast("請填寫說明");
+  }
+  try {
+    await setDoc(doc(db, "payConfirm", `${mp.month}_${me.id}`), { empId: me.id, name: me.name, month: mp.month, status: b.dataset.mp, note: note.trim(), at: serverTimestamp() });
+    toast(b.dataset.mp === "ok" ? "已確認無誤" : "已回報，管理者會幫你確認");
+    loadMyPay();
+  } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
 };
 
 $("#payCsv").onclick = () => {
