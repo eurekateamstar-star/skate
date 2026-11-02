@@ -70,6 +70,16 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // 加班申請（班表沒排到時，員工自己申請某個班別）：送出後可先打卡，管理者審核後加入班表
+    match /shiftRequests/{id} {
+      allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow create: if bound()
+                    && request.resource.data.empId == myEmpId()
+                    && request.resource.data.status == 'pending';
+      allow update: if isAdmin() || seenOnly();
+      allow delete: if isAdmin() || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending');
+    }
+
     // 請假申請：員工送出、可修改／取消審核中的；管理者審核、修改、指定代班
     match /leaveRequests/{id} {
       allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());

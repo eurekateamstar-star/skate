@@ -444,25 +444,37 @@ async function runReminders(env, manual = false) {
 
   // 2. 新的請假／補打卡申請 → 通知管理者
   // 只查還沒通知過的（notified == false），沒有就只算 1 次讀取
-  const [pendP, pendL] = await Promise.all([fs.whereAnd("punchRequests", { notified: false }), fs.whereAnd("leaveRequests", { notified: false })]);
-  const newP = pendP.filter(q => q.status === "pending"), newL = pendL.filter(q => q.status === "pending");
-  if (newP.length || newL.length) {
+  const [pendP, pendL, pendS] = await Promise.all([fs.whereAnd("punchRequests", { notified: false }), fs.whereAnd("leaveRequests", { notified: false }), fs.whereAnd("shiftRequests", { notified: false })]);
+  const newP = pendP.filter(q => q.status === "pending"), newL = pendL.filter(q => q.status === "pending"), newS = pendS.filter(q => q.status === "pending");
+  if (newP.length || newL.length || newS.length) {
     const admins = Object.values(empBy).filter(e => e.role === "admin" && e.lineUid);
     const lines = [
       ...newL.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}（${(q.shiftNames || []).length} 個班）`),
-      ...newP.map(q => `⏱ ${q.name}　${q.date.slice(5)} 補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`)
+      ...newP.map(q => `⏱ ${q.name}　${q.date.slice(5)} 補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`),
+      ...newS.map(q => `➕ ${q.name}　${q.date.slice(5)} 加班 ${q.shiftName}`)
     ];
-    const title = [newL.length ? `${newL.length} 筆請假` : "", newP.length ? `${newP.length} 筆補打卡` : ""].filter(Boolean).join("、");
+    const title = [newL.length ? `${newL.length} 筆請假` : "", newP.length ? `${newP.length} 筆補打卡` : "", newS.length ? `${newS.length} 筆加班` : ""].filter(Boolean).join("、");
     const msg = card(`📝 ${title}待審核`, "簽核中心", lines.slice(0, 8).join("\n") + (lines.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=approvals`);
     for (const a of admins) await push(env, a.lineUid.slice(5), msg).catch(() => {});
 
-    result.notifiedAdmins = newP.length + newL.length;
+    result.notifiedAdmins = newP.length + newL.length + newS.length;
   }
   for (const q of pendP) await fs.patchPath(`punchRequests/${q.id}`, { notified: true }).catch(() => {});
   for (const q of pendL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
+  for (const q of pendS) await fs.patchPath(`shiftRequests/${q.id}`, { notified: true }).catch(() => {});
 
   // 3. 審核結果 → 通知員工
-  const [doneP, doneL, doneS] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo"), fs.where("payslips", "notifyEmp", "todo")]);
+  const [doneP, doneL, doneS, doneSh] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo"), fs.where("payslips", "notifyEmp", "todo"), fs.where("shiftRequests", "notifyEmp", "todo")]);
+  // 加班申請結果 → 通知員工
+  for (const q of doneSh) {
+    const e = empBy[q.empId];
+    if (e?.lineUid) {
+      const ok = q.status === "approved";
+      await push(env, e.lineUid.slice(5), card(ok ? "✅ 加班已核准" : "❌ 加班被退回", q.shiftName || "加班申請",
+        `${q.date.slice(5)} ${q.shiftName || ""}${ok ? "\n已加入你的班表" : q.rejectNote ? `\n退回原因：${q.rejectNote}` : ""}`, "查看", `${LIFF}?view=clock`, ok ? "#34c759" : "#ff3b30")).catch(() => {});
+    }
+    await fs.patchPath(`shiftRequests/${q.id}`, { notifyEmp: "done" }).catch(() => {});
+  }
   // 薪資發布 → 通知員工
   for (const q of doneS) {
     const e = empBy[q.empId];

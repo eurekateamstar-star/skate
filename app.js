@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=50";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=51";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -612,8 +612,9 @@ function renderClockCache() {
 async function loadClock() {
   const today = ymd(new Date());
   const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${me.id}_${today}`)), loadToday(), loadLocations(),
-    loadMyReqs(today.slice(0, 7)).catch(() => {})]);
+    loadMyReqs(today.slice(0, 7)).catch(() => {}), loadMyShiftReqs().catch(() => {})]);
   clockShifts = sch.exists() ? sch.data().shiftIds || [] : [];
+  calcExtra();
   clockLeave = sch.exists() ? sch.data().leave || {} : {};
   saveClockCache();
   writeCache();
@@ -623,6 +624,18 @@ async function loadClock() {
   updateClockMap();
 }
 
+// ---- 申請其他班別（臨時加班）----
+let myShiftReqs = [];
+async function loadMyShiftReqs() {
+  const snap = await getDocs(query(collection(db, "shiftRequests"), where("empId", "==", me.id), where("date", "==", ymd(new Date()))));
+  myShiftReqs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+// 今天額外要顯示的班：申請中／已核准的臨時班 + 有打卡但不在班表上的班
+function calcExtra() {
+  extraShifts = [...myShiftReqs.filter(q => q.status !== "rejected").map(q => q.shiftId),
+    ...todayRecs.map(r => r.shiftId).filter(Boolean)].filter(id => !clockShifts.includes(id));
+}
+const shiftReqOf = id => myShiftReqs.find(q => q.shiftId === id && q.status !== "rejected");
 async function loadToday() {
   const today = ymd(new Date());
   const snap = await getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("date", "==", today)));
@@ -632,7 +645,7 @@ async function loadToday() {
 function renderPunchCards() {
   const ids = punchIds();
   if (!ids.length) {
-    $("#shiftPunch").innerHTML = `<div class="card empty-card">今天沒有排班</div>`;
+    $("#shiftPunch").innerHTML = `<div class="card empty-card">今天沒有排班<br><small>有上班但沒排到？按下方「申請其他班別打卡」</small></div>`;
     return;
   }
   $("#shiftPunch").innerHTML = ids.map(id => {
@@ -683,7 +696,9 @@ function renderPunchCards() {
       ? locLine(chkIn, "上班", inLoc, inR) + locLine(chkOut, "下班", outLoc, outR)
       : (inR && outR ? locLine(chkIn, "", inLoc, outR) : locLine(chkIn, "", inLoc))}</div>`;
     const hint = timeHint(s, inR, outR);
-    const badge = inR && outR ? `<span class="pc-pill done">已完成</span>`
+    const sreq = !clockShifts.includes(id) ? shiftReqOf(id) : null;
+    const badge = sreq?.status === "pending" && !(inR && outR) ? `<span class="pc-pill soon">加班・審核中</span>`
+      : inR && outR ? `<span class="pc-pill done">已完成</span>`
       : hint ? `<span class="pc-pill ${hint.cls}">${hint.text}</span>`
       : inR ? `<span class="pc-pill on">上班中</span>` : "";
     return `<div class="card punch-card">
@@ -721,6 +736,78 @@ async function updateClockMap() {
     }
   }, 50);
 }
+
+// 過去 3 個月＋本月我的排班（過去月份存在本機，不重複讀）
+const HIST_KEY = "punch_hist_v1";
+async function myHistory() {
+  let cache = {};
+  try { const c = JSON.parse(localStorage.getItem(HIST_KEY) || "null"); if (c?.uid === me.id) cache = c.months || {}; } catch {}
+  const now = new Date(), cur = ym(now);
+  const months = [0, 1, 2, 3].map(i => ym(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+  await Promise.all(months.map(async m => {
+    if (m !== cur && cache[m]) return;
+    const snap = await getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", m)));
+    const days = {};
+    snap.forEach(d => { const x = d.data(); days[x.date] = (x.shiftIds || []).filter(id => !x.leave?.[id]); });
+    cache[m] = days;
+  }));
+  try { localStorage.setItem(HIST_KEY, JSON.stringify({ uid: me.id, months: Object.fromEntries(months.map(m => [m, cache[m]])) })); } catch {}
+  return months.flatMap(m => Object.entries(cache[m] || {}));
+}
+let otRank = null;
+async function openOtherPunch() {
+  $("#otFilter").value = "";
+  $("#otList").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
+  $("#otherModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#otherModal").classList.add("open"));
+  const today = ymd(new Date()), wd = new Date().getDay();
+  const hist = await myHistory().catch(() => []);
+  const wdN = {}, allN = {};
+  hist.forEach(([ds, ids]) => { if (ds === today) return; const same = new Date(ds + "T00:00:00").getDay() === wd; ids.forEach(id => { allN[id] = (allN[id] || 0) + 1; if (same) wdN[id] = (wdN[id] || 0) + 1; }); });
+  otRank = { wdN, allN, wd };
+  renderOtherList();
+}
+function renderOtherList() {
+  if (!otRank) return;
+  const { wdN, allN, wd } = otRank;
+  const f = $("#otFilter").value.trim().toLowerCase();
+  const have = punchIds();
+  const busy = workIds([...clockShifts, ...extraShifts], clockLeave);
+  const list = shiftTypes.filter(s => s.cat !== "leave" && !have.includes(s.id) && (!f || s.name.toLowerCase().includes(f) || (s.code || "").toLowerCase().includes(f)))
+    .map((s, i) => ({ s, i, sc: (wdN[s.id] || 0) * 1000 + (allN[s.id] || 0) }))
+    .sort((a, b) => b.sc - a.sc || a.i - b.i);
+  let hot = false, rest = false;
+  $("#otList").innerHTML = list.map(({ s, sc }) => {
+    const c = clashWith(s.id, busy);
+    let head = "";
+    if (!f && sc > 0 && !hot) { hot = true; head = `<div class="list-head">你常排的班</div>`; }
+    if (!f && sc === 0 && !rest) { rest = true; head = `<div class="list-head">其他班別</div>`; }
+    const why = wdN[s.id] ? `你週${WEEK[wd]}排過 ${wdN[s.id]} 次・共 ${allN[s.id]} 次` : allN[s.id] ? `共排過 ${allN[s.id]} 次` : "";
+    return `${head}<button class="ot-item ${c ? "clash" : ""}" data-sid="${s.id}" ${c ? "disabled" : ""}>
+      <span class="dot" style="background:${esc(s.color)}"></span>
+      <span class="ot-main"><b>${esc(s.name)}</b><small>${[s.start && s.end ? `${s.start}–${s.end}` : "", c ? `<em>時段衝突：${esc(shiftMap[c].name)}</em>` : why].filter(Boolean).join("・")}</small></span>
+      <span class="ot-add">${c ? "" : "申請"}</span></button>`;
+  }).join("") || `<p class="empty">找不到班別</p>`;
+}
+function closeOther() { $("#otherModal").classList.remove("open"); setTimeout(() => $("#otherModal").classList.add("hidden"), 200); }
+$("#otherPunchBtn").onclick = () => openOtherPunch();
+$("#otFilter").oninput = renderOtherList;
+$("#otherModal").onclick = async e => {
+  if (e.target.id === "otherModal" || e.target.closest("[data-close]")) return closeOther();
+  const b = e.target.closest(".ot-item[data-sid]"); if (!b || b.disabled) return;
+  const s = shiftMap[b.dataset.sid];
+  if (!(await appConfirm("申請這個班", `${s.name}${s.start && s.end ? `（${s.start}–${s.end}）` : ""}\n送出後就可以先打卡，管理者審核通過會加進你今天的班表。`, { okText: "送出申請" }))) return;
+  const today = ymd(new Date());
+  try {
+    const data = { empId: me.id, name: me.name, empNo: me.empNo || "", date: today, month: today.slice(0, 7), shiftId: s.id, shiftName: s.name,
+      status: "pending", notified: false, createdAt: serverTimestamp() };
+    const ref = await addDoc(collection(db, "shiftRequests"), data);
+    myShiftReqs.push({ id: ref.id, ...data });
+    calcExtra(); renderPunchCards(); updateClockMap();
+    closeOther();
+    toast("已送出，現在可以打卡了");
+  } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
+};
 
 // ---- 時間提示與補打卡判斷 ----
 const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
@@ -2503,26 +2590,29 @@ $("#lvList").onclick = async e => {
 };
 
 /* ================= 簽核中心（管理者） ================= */
-let ap = { tab: "leave", leave: [], punch: [], done: [] };
+let ap = { tab: "leave", leave: [], punch: [], shift: [], done: [] };
 async function fetchPending() {
-  const [l, p] = await Promise.all([
+  const [l, p, sh] = await Promise.all([
     getDocs(query(collection(db, "leaveRequests"), where("status", "==", "pending"))),
-    getDocs(query(collection(db, "punchRequests"), where("status", "==", "pending")))
+    getDocs(query(collection(db, "punchRequests"), where("status", "==", "pending"))),
+    getDocs(query(collection(db, "shiftRequests"), where("status", "==", "pending"))).catch(() => null)
   ]);
+  ap.shift = (sh?.docs || []).map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
   ap.leave = l.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
   ap.punch = p.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
   setApBadge();
-  return ap.leave.length + ap.punch.length;
+  return ap.leave.length + ap.punch.length + ap.shift.length;
 }
 async function fetchApproved() {
   const snap = await getDocs(query(collection(db, "leaveRequests"), where("status", "==", "approved")));
   ap.done = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 150);
 }
 function setApBadge() {
-  const n = ap.leave.length + ap.punch.length;
+  const n = ap.leave.length + ap.punch.length + ap.shift.length;
   ["#apBadge", "#apBadge2", "#apBadge3"].forEach(sel => { const el = $(sel); if (el) { el.textContent = n; el.classList.toggle("hidden", !n); } });
   $("#apN1").textContent = ap.leave.length || "";
   $("#apN2").textContent = ap.punch.length || "";
+  $("#apN3").textContent = ap.shift.length || "";
 }
 async function loadApprovals() {
   await Promise.all([fetchPending(), ap.tab === "done" ? fetchApproved() : null, employees.length ? null : loadEmployees()]);
@@ -2544,8 +2634,13 @@ function leaveCard(q, done) {
 function renderApprovals() {
   $$("#apTab button").forEach(b => b.classList.toggle("on", b.dataset.v === ap.tab));
   const list = ap[ap.tab];
-  const empty = { leave: "目前沒有待審核的請假申請 🎉", punch: "目前沒有待審核的補打卡申請 🎉", done: "還沒有已核准的請假" }[ap.tab];
-  $("#apList").innerHTML = list.map(q => ap.tab !== "punch" ? leaveCard(q, ap.tab === "done") : `
+  const empty = { leave: "目前沒有待審核的請假申請 🎉", punch: "目前沒有待審核的補打卡申請 🎉", shift: "目前沒有待審核的加班申請 🎉", done: "還沒有已核准的請假" }[ap.tab];
+  $("#apList").innerHTML = list.map(q => ap.tab === "shift" ? `
+    <div class="card ap-item" data-id="${q.id}">
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">加班（班表沒排到）</span></div>
+      <div class="ap-date">${dayLabel(q.date)}・${esc(q.shiftName)}${shiftMap[q.shiftId]?.start ? `（${shiftMap[q.shiftId].start}–${shiftMap[q.shiftId].end}）` : ""}</div>
+      <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准並加入班表</button></div>
+    </div>` : ap.tab !== "punch" ? leaveCard(q, ap.tab === "done") : `
     <div class="card ap-item" data-id="${q.id}">
       <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">補打卡</span></div>
       <div class="ap-date">${dayLabel(q.date)}・${esc(q.shiftName)}</div>
@@ -2716,6 +2811,30 @@ $("#apList").onclick = async e => {
     catch (err) { b.disabled = false; err.clash ? appAlert("代班時段衝突", err.message + "\n請按「修改／代班」換一位代班人。") : appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
     return;
   }
+  if (ap.tab === "shift") {
+    try {
+      if (b.dataset.ap === "ok") {
+        const day = await loadDayAll(q.date);
+        const d = day[q.empId] || {};
+        const c = clashWith(q.shiftId, workIds(d.ids, d.leave).filter(x => x !== q.shiftId));
+        if (c && !(await appConfirm("時段衝突", `${q.name} 那天已經有「${shiftMap[c]?.name}」，時間重疊。仍要加入嗎？`, { okText: "仍要加入" }))) return;
+        b.disabled = true;
+        const batch = writeBatch(db);
+        batch.set(doc(db, "schedules", `${q.empId}_${q.date}`), { empId: q.empId, date: q.date, month: q.date.slice(0, 7), shiftIds: arrayUnion(q.shiftId) }, { merge: true });
+        batch.update(doc(db, "shiftRequests", q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false });
+        await batch.commit();
+        toast(`已核准並加入班表：${q.name} ${q.shiftName}`);
+      } else {
+        const note = await appDialog({ title: "退回加班申請", message: `${q.name}・${dayLabel(q.date)} ${q.shiftName}\n退回後這堂不會算薪資（已打的卡仍保留紀錄）`, input: { type: "text", placeholder: "退回原因（選填，員工會看到）" },
+          buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
+        if (note === false) return;
+        await updateDoc(doc(db, "shiftRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false });
+        toast("已退回");
+      }
+      await loadApprovals();
+    } catch (err) { b.disabled = false; appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+    return;
+  }
   const title = `${q.name}・${dayLabel(q.date)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`;
   try {
     if (b.dataset.ap === "ok") {
@@ -2750,26 +2869,28 @@ async function checkPendingOnStart() {
   syncStaff().catch(() => {});
   const n = await fetchPending().catch(() => 0);
   if (!n) return;
-  const parts = [ap.leave.length ? `請假 ${ap.leave.length} 筆` : "", ap.punch.length ? `補打卡 ${ap.punch.length} 筆` : ""].filter(Boolean).join("、");
+  const parts = [ap.leave.length ? `請假 ${ap.leave.length} 筆` : "", ap.punch.length ? `補打卡 ${ap.punch.length} 筆` : "", ap.shift.length ? `加班 ${ap.shift.length} 筆` : ""].filter(Boolean).join("、");
   const go = await appDialog({ title: "有申請待審核", message: parts, buttons: [{ text: "稍後", value: false }, { text: "前往審核", value: true, style: "primary" }] });
-  if (go) { ap.tab = ap.leave.length ? "leave" : "punch"; showView("approvals"); }
+  if (go) { ap.tab = ap.leave.length ? "leave" : ap.punch.length ? "punch" : "shift"; showView("approvals"); }
 }
 // 員工：申請審核完成後，打開系統跳出結果（按「知道了」後不再出現）
 async function showMyResults() {
   if (!me?.id) return;
   const since = ymd(new Date(Date.now() - 30 * 864e5));
-  const [l, p] = await Promise.all([
+  const [l, p, shq] = await Promise.all([
     getDocs(query(collection(db, "leaveRequests"), where("empId", "==", me.id))),
-    getDocs(query(collection(db, "punchRequests"), where("empId", "==", me.id)))
+    getDocs(query(collection(db, "punchRequests"), where("empId", "==", me.id))),
+    getDocs(query(collection(db, "shiftRequests"), where("empId", "==", me.id))).catch(() => null)
   ]);
   const pick = (snap, coll) => snap.docs.map(d => ({ id: d.id, coll, ...d.data() }))
     .filter(q => q.status !== "pending" && q.seenByEmp === false && q.date >= since);
   const sl = await getDocs(query(collection(db, "payslips"), where("empId", "==", me.id))).catch(() => null);
   const slips = (sl?.docs || []).map(d => ({ id: d.id, coll: "payslips", date: d.data().month + "-01", ...d.data() })).filter(q => q.seenByEmp === false);
-  const list = [...pick(l, "leaveRequests"), ...pick(p, "punchRequests"), ...slips].sort((a, b) => a.date.localeCompare(b.date));
+  const list = [...pick(l, "leaveRequests"), ...pick(p, "punchRequests"), ...(shq ? pick(shq, "shiftRequests") : []), ...slips].sort((a, b) => a.date.localeCompare(b.date));
   if (!list.length) return;
   const line = q => {
     if (q.coll === "payslips") { const [y, m] = q.month.split("-"); return `💰 ${y}年${+m}月薪資已結算\n${money(q.total)}（到「我的薪資」看明細）`; }
+    if (q.coll === "shiftRequests") return `${q.status === "approved" ? "✅ 加班已核准，已加入班表" : "❌ 加班申請被退回"}\n${dayLabel(q.date)} ${q.shiftName}` + (q.status === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "");
     if (q.coll === "punchRequests") return `${q.status === "approved" ? "✅ 補打卡已核准" : "❌ 補打卡被退回"}\n${dayLabel(q.date)} ${q.shiftName || ""}・${q.type === "in" ? "上班" : "下班"} ${q.time}` + (q.status === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "");
     const head = q.status === "revoked" ? "↩️ 請假已撤銷" : q.status === "rejected" ? "❌ 請假被退回" : q.notifyKind === "edited" ? "✏️ 請假已被修改" : "✅ 請假審核通過";
     return `${head}\n${dayLabel(q.date)} ${q.leaveType}・${(q.shiftNames || []).join("、")}`
