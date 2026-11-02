@@ -670,3 +670,20 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 
   #toast{top:calc(var(--top) + 12px)}
 }
+
+/* ---------- 打卡卡片：精簡提示 ---------- */
+.pc-pill{flex-shrink:0;align-self:flex-start;margin-top:2px;padding:4px 10px;border-radius:980px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.pc-pill.soon{background:var(--primary-l);color:var(--primary)}
+.pc-pill.late{background:var(--red-l);color:var(--red)}
+.pc-pill.on{background:var(--orange-l);color:var(--orange-d)}
+.pc-pill.done{background:var(--green-l);color:var(--green-d)}
+.pc-locs{display:flex;flex-direction:column;gap:6px;margin:12px 0 14px;padding:10px 12px;background:var(--fill);border-radius:12px}
+.pl{display:flex;align-items:center;gap:8px;font-size:13.5px;min-width:0;line-height:1.3}
+.pl i{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--muted)}
+.pl b{font-weight:600;color:var(--text-2);flex-shrink:0}
+.pl span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.pl em{font-style:normal;flex-shrink:0;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.pl.ok i{background:var(--green)} .pl.ok em{color:var(--green-d)}
+.pl.far i{background:var(--red)} .pl.far em{color:var(--red)}
+.pl.wait i{background:var(--orange);animation:pulse 1.2s infinite}
+.pl.done span,.pl.done b{color:var(--muted)} .pl.done em{color:var(--green-d)}

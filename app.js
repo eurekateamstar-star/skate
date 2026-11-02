@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=36";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=37";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -657,19 +657,26 @@ function renderPunchCards() {
         <span>${label}</span><small>不在範圍・申請打卡</small></button>`;
       return `<button class="btn big ${type}" data-punch="${type}" data-sid="${id}"><span>${label}</span></button>`;
     };
-    // 地點：上下班相同顯示一行；不同時兩行都顯示，已打卡的那行標示完成
-    const locLine = (chk, prefix, loc, r) => r
-      ? `<div class="pc-loc done"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(loc?.name || "不限地點")}・已打卡 ${hm(r.t)}</div>`
-      : `<div class="pc-loc ${chk.cls}"><svg class="ic sm"><use href="#i-pin"/></svg>${prefix ? `<b>${prefix}</b>` : ""}${esc(chk.text)}</div>`;
-    const locHtml = two
+    // 地點：精簡一行一個，小圓點表示狀態（綠＝範圍內、紅＝範圍外、灰＝已打卡／不限）
+    const fmtD = d => d == null ? "" : d >= 1000 ? `${(d / 1000).toFixed(1)} 公里` : `${d} 公尺`;
+    const locLine = (chk, prefix, loc, r) => {
+      const label = prefix ? `<b>${prefix}</b>` : "";
+      if (r) return `<div class="pl done"><i></i>${label}<span>${esc(loc?.name || "不限地點")}</span><em>✓ ${hm(r.t)}</em></div>`;
+      if (!loc) return `<div class="pl none"><i></i>${label}<span>不限地點</span></div>`;
+      if (chk.cls === "wait") return `<div class="pl wait"><i></i>${label}<span>${esc(loc.name)}</span><em>定位中…</em></div>`;
+      if (geo.err) return `<div class="pl far"><i></i>${label}<span>${esc(loc.name)}</span><em>無法定位</em></div>`;
+      return `<div class="pl ${chk.ok ? "ok" : "far"}"><i></i>${label}<span>${esc(loc.name)}</span><em>${fmtD(chk.d)}${chk.ok ? "" : "・範圍外"}</em></div>`;
+    };
+    const locHtml = `<div class="pc-locs">${two
       ? locLine(chkIn, "上班", inLoc, inR) + locLine(chkOut, "下班", outLoc, outR)
-      : (inR && outR ? locLine(chkIn, "", inLoc, outR) : locLine(chkIn));
+      : (inR && outR ? locLine(chkIn, "", inLoc, outR) : locLine(chkIn, "", inLoc))}</div>`;
     const hint = timeHint(s, inR, outR);
+    const badge = inR && outR ? `<span class="pc-pill done">已完成</span>`
+      : hint ? `<span class="pc-pill ${hint.cls}">${hint.text}</span>`
+      : inR ? `<span class="pc-pill on">上班中</span>` : "";
     return `<div class="card punch-card">
       <div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
-        <div class="pc-title"><b>${esc(s.name)}</b>${time ? `<span>${time}</span>` : ""}</div>
-        ${inR && outR ? `<span class="badge green">已完成</span>` : inR ? `<span class="badge orange">上班中</span>` : ""}</div>
-      ${hint ? `<div class="pc-hint ${hint.cls}">${hint.text}</div>` : ""}
+        <div class="pc-title"><b>${esc(s.name)}</b>${time ? `<span>${time}</span>` : ""}</div>${badge}</div>
       ${locHtml}
       <div class="pc-btns">${btn("in", inR, "上班")}${btn("out", outR, "下班")}</div>
     </div>`;
@@ -716,12 +723,12 @@ function isMakeup(s, type) {
 function timeHint(s, inR, outR) {
   const st = toMin(s.start), en = toMin(s.end), n = nowMin();
   if (st == null || en == null) return null;
-  if (!inR && n < st && st - n <= 60) return { cls: "soon", text: `⏰ 還有 ${st - n} 分鐘上班` };
-  if (!inR && n >= st && n <= en) return { cls: "late", text: `⚠️ 已超過上班時間 ${n - st} 分鐘，請盡快打卡` };
-  if (!inR && n > en) return { cls: "late", text: `⚠️ 這個班已經結束，請按「補打卡」並填寫原因` };
-  if (inR && !outR && n < en && en - n <= 15) return { cls: "soon", text: `⏰ 還有 ${en - n} 分鐘下班` };
-  if (inR && !outR && n >= en && n <= en + MAKEUP_OUT_GRACE) return { cls: "soon", text: `⏰ 已到下班時間，記得打下班卡` };
-  if (inR && !outR && n > en + MAKEUP_OUT_GRACE) return { cls: "late", text: `⚠️ 忘記打下班卡了，請按「補打卡」` };
+  if (!inR && n < st && st - n <= 60) return { cls: "soon", text: `${st - n} 分後上班` };
+  if (!inR && n >= st && n <= en) return { cls: "late", text: `遲到 ${n - st} 分` };
+  if (!inR && n > en) return { cls: "late", text: "需補打卡" };
+  if (inR && !outR && n < en && en - n <= 15) return { cls: "soon", text: `${en - n} 分後下班` };
+  if (inR && !outR && n >= en && n <= en + MAKEUP_OUT_GRACE) return { cls: "soon", text: "該打下班卡" };
+  if (inR && !outR && n > en + MAKEUP_OUT_GRACE) return { cls: "late", text: "忘記打下班" };
   return null;
 }
 // 每分鐘更新一次提示
