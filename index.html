@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=39">
+  <link rel="stylesheet" href="style.css?v=40">
 </head>
 <body>
 
@@ -135,8 +135,12 @@
             <div class="seg wide lv-types" id="lvType">
               <button data-v="事假" class="on">事假</button><button data-v="病假">病假</button><button data-v="特休">特休</button><button data-v="公假">公假</button><button data-v="其他">其他</button>
             </div></div>
+          <div class="field"><label class="lv-label">代班</label>
+            <div class="seg wide" id="lvSub"><button data-v="no" class="on">不需代班</button><button data-v="yes">有代班的人</button></div>
+            <input id="lvSubName" class="lv-subname hidden" placeholder="代班人姓名，例：王小明"></div>
           <div class="field"><label class="lv-label">原因</label><textarea id="lvReason" rows="2" placeholder="例：家裡有事、身體不舒服"></textarea></div>
           <button class="btn primary lv-submit" id="lvSubmit">送出請假申請</button>
+          <button class="btn link lv-cancel-edit hidden" id="lvCancelEdit">取消修改</button>
         </div>
         <div class="rd-title">我的請假紀錄</div>
         <div id="lvList"></div>
@@ -145,8 +149,8 @@
       <!-- 簽核中心 -->
       <section id="view-approvals" class="view hidden">
         <div class="view-head">
-          <div class="vh-title"><h2>簽核中心</h2><div class="vh-sub">審核員工的請假與補打卡申請</div></div>
-          <div class="vh-actions"><div class="seg" id="apTab"><button data-v="leave" class="on">請假 <span id="apN1"></span></button><button data-v="punch">補打卡 <span id="apN2"></span></button></div></div>
+          <div class="vh-title"><h2>簽核中心</h2><div class="vh-sub">審核請假與補打卡，已核准的請假也可以修改、指定代班</div></div>
+          <div class="vh-actions"><div class="seg" id="apTab"><button data-v="leave" class="on">請假 <span id="apN1"></span></button><button data-v="punch">補打卡 <span id="apN2"></span></button><button data-v="done">已核准</button></div></div>
         </div>
         <div id="apList"></div>
       </section>
@@ -523,6 +527,29 @@
   </div>
 
   <!-- 補打卡申請 -->
+  <!-- 請假審核／修改（管理者） -->
+  <div class="modal-mask hidden" id="lvModal">
+    <div class="modal small-modal">
+      <div class="modal-head">
+        <button class="btn link" data-close>取消</button>
+        <h3 id="lmTitle">請假</h3>
+        <button class="btn link strong" id="lmSave">儲存</button>
+      </div>
+      <div class="modal-body">
+        <div class="group">
+          <div class="field"><label>員工・日期</label><div class="mk-title" id="lmWho"></div></div>
+          <div class="field"><label>請假班別與代班人</label><div id="lmShifts" class="lm-shifts"></div><div class="lm-subhint" id="lmSubHint"></div></div>
+          <div class="field"><label>假別</label>
+            <div class="seg wide lv-types" id="lmType"><button data-v="事假">事假</button><button data-v="病假">病假</button><button data-v="特休">特休</button><button data-v="公假">公假</button><button data-v="其他">其他</button></div></div>
+          <div class="field"><label>原因</label><textarea id="lmReason" rows="2"></textarea></div>
+        </div>
+        <p class="hint">指定代班人後，核准時會自動把那個班排進代班人的班表。</p>
+        <div class="lm-acts" id="lmActs"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 補打卡 -->
   <div class="modal-mask hidden" id="makeupModal">
     <div class="modal small-modal">
       <div class="modal-head">
@@ -616,6 +643,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=39"></script>
+<script type="module" src="app.js?v=40"></script>
 </body>
 </html>

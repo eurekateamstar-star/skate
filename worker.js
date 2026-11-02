@@ -433,10 +433,24 @@ async function runReminders(env, manual = false) {
       const e = empBy[q.empId];
       if (e && String(e.lineUid || "").startsWith("line:")) {
         const ok = q.status === "approved";
-        const what = coll === "leaveRequests" ? `${q.date.slice(5)} ${q.leaveType}\n${(q.shiftNames || []).join("、")}` : `${q.date.slice(5)} ${q.shiftName}\n補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`;
-        const msg = card(ok ? "✅ 已核准" : "❌ 已退回", coll === "leaveRequests" ? "請假申請" : "補打卡申請",
-          what + (!ok && q.rejectNote ? `\n退回原因：${q.rejectNote}` : ""), "查看", `${LIFF}?view=${coll === "leaveRequests" ? "leave" : "records"}`, ok ? "#34c759" : "#ff3b30");
+        const kind = q.status === "revoked" ? "revoked" : ok && q.notifyKind === "edited" ? "edited" : ok ? "approved" : "rejected";
+        const subs = Object.entries(q.subNames || {}).filter(([, n]) => n);
+        const subLine = coll === "leaveRequests" && ok ? `\n代班：${subs.length ? [...new Set(subs.map(([, n]) => n))].join("、") : "不需代班"}` : "";
+        const what = coll === "leaveRequests" ? `${q.date.slice(5)} ${q.leaveType}\n${(q.shiftNames || []).join("、")}${subLine}` : `${q.date.slice(5)} ${q.shiftName}\n補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`;
+        const head = { approved: "✅ 已核准", edited: "✏️ 已修改", revoked: "↩️ 已撤銷", rejected: "❌ 已退回" }[kind];
+        const msg = card(head, coll === "leaveRequests" ? "請假申請" : "補打卡申請",
+          what + (kind === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "") + (kind === "revoked" ? "\n請假已取消，請照原班表上班" : ""),
+          "查看", `${LIFF}?view=${coll === "leaveRequests" ? "leave" : "records"}`, kind === "rejected" ? "#ff3b30" : kind === "revoked" ? "#8e8e93" : "#34c759");
         await push(env, e.lineUid.slice(5), msg).catch(() => {});
+        // 代班人也通知
+        if (coll === "leaveRequests" && (kind === "approved" || kind === "edited")) {
+          for (const [sid, eid] of Object.entries(q.subAdded || {})) {
+            const s = empBy[eid];
+            if (!s || !String(s.lineUid || "").startsWith("line:")) continue;
+            const idx = (q.shiftIds || []).indexOf(sid);
+            await push(env, s.lineUid.slice(5), card("🔁 代班通知", "排班異動", `${q.date.slice(5)} ${q.shiftNames?.[idx] || ""}\n代 ${q.name} 的班`, "查看班表", `${LIFF}?view=mySchedule`, "#ff9500")).catch(() => {});
+          }
+        }
       }
       await fs.patchPath(`${coll}/${q.id}`, { notifyEmp: "done" }).catch(() => {});
     }

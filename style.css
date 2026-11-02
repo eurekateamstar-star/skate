@@ -737,3 +737,22 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 .lv-no{color:#fff !important}
 .field label.lv-shift{display:flex;flex-direction:row;align-items:center;gap:12px;margin:0;font-size:inherit;color:var(--text)}
 .field label.lv-shift .lv-name{font-size:15px}
+/* 代班 */
+.lv-subname{width:100%;margin-top:10px}
+.lv-cancel-edit{width:100%;margin-top:6px}
+.lv-acts{display:flex;justify-content:flex-end;margin-top:10px}
+.lv-reason.muted{color:var(--muted);font-size:12.5px}
+.lv-shs span b{color:var(--orange-d,#c93400);font-weight:600}
+.lm-shifts{display:flex;flex-direction:column;gap:8px}
+.lm-row{background:var(--fill);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;opacity:.65;transition:opacity .15s,box-shadow .15s}
+.lm-row.on{opacity:1;box-shadow:inset 0 0 0 2px var(--primary);background:var(--primary-l)}
+.field label.lm-chk{display:flex;align-items:center;gap:10px;margin:0;font-size:inherit;color:var(--text);cursor:pointer}
+.field .lm-chk input[type=checkbox]{width:22px;height:22px;flex:0 0 22px;margin:0}
+.lm-sub{width:100%;background:#fff}
+.lm-sub:disabled{opacity:.5}
+.lm-subhint{margin-top:8px;font-size:13px;color:var(--orange-d,#c93400)}
+.lm-acts{display:flex;gap:10px;margin-top:14px}
+.lm-acts .btn{flex:1;height:44px;font-size:15px}
+.ap-acts .btn{min-width:0}
+.ap-acts{grid-template-columns:repeat(auto-fit,minmax(0,1fr))}
+.ap-acts .btn.primary{grid-column:span 1}

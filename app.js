@@ -4,9 +4,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
-  collection, query, where, getDocs, serverTimestamp, writeBatch
+  collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=39";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=40";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -2216,7 +2216,13 @@ function punchDetail(r, kind, plan, ds) {
 }
 
 /* ================= 請假（員工） ================= */
-const LV_ST = { pending: ["warn", "審核中"], approved: ["ok", "已核准"], rejected: ["bad", "已退回"] };
+const LV_ST = { pending: ["warn", "審核中"], approved: ["ok", "已核准"], rejected: ["bad", "已退回"], revoked: ["", "已撤銷"] };
+// 代班文字：管理者指定的優先，否則顯示員工填的
+function subText(q) {
+  const names = Object.entries(q.subNames || {}).filter(([sid, n]) => n && (q.shiftIds || []).includes(sid));
+  if (names.length) return names.map(([sid, n]) => (q.shiftIds.length > 1 ? `${shiftMap[sid]?.name || ""} → ` : "") + n).join("、");
+  return q.subNeed ? (q.subName || "有代班") : "不需代班";
+}
 let lv = { month: null, date: null, sch: undefined, monthSch: {}, mine: [] };
 
 async function loadLeaveView() {
@@ -2272,10 +2278,11 @@ function renderLvShifts() {
   if (!lv.date || lv.sch === undefined) return;
   const ids = lvWorkIds(lv.sch);
   if (!ids.length) { $("#lvShifts").innerHTML = `<p class="empty" style="padding:14px">這天沒有排班</p>`; $("#lvSubmit").disabled = true; return; }
-  const taken = id => lv.sch?.leave?.[id] ? "已請假" : lv.mine.some(q => q.date === lv.date && q.status === "pending" && (q.shiftIds || []).includes(id)) ? "審核中" : "";
+  const taken = id => lv.sch?.leave?.[id] ? "已請假" : lv.mine.some(q => q.id !== lv.editId && q.date === lv.date && q.status === "pending" && (q.shiftIds || []).includes(id)) ? "審核中" : "";
+  const pre = lv.editId ? (lv.mine.find(q => q.id === lv.editId)?.date === lv.date ? lv.mine.find(q => q.id === lv.editId).shiftIds || [] : []) : [];
   $("#lvShifts").innerHTML = ids.map((id, i) => {
     const s = shiftMap[id], t = taken(id);
-    return `<label class="lv-shift ${t ? "taken" : ""}"><input type="checkbox" value="${id}" ${t ? "disabled" : ""}>
+    return `<label class="lv-shift ${t ? "taken" : ""}"><input type="checkbox" value="${id}" ${t ? "disabled" : ""} ${!t && pre.includes(id) ? "checked" : ""}>
       <span class="lv-no" style="background:${esc(s.color || "#8e8e93")}">${i + 1}</span>
       <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span>${t ? `<span class="tag ${t === "已請假" ? "ok" : "warn"}">${t}</span>` : ""}</label>`;
   }).join("") + (ids.length > 1 ? `<button class="btn link lv-all" id="lvAll">全部勾選</button>` : "");
@@ -2288,8 +2295,10 @@ function renderMyLeaves() {
       <div class="lv-top"><b>${dayLabel(q.date)}</b><span class="tag">${esc(q.leaveType)}</span><span class="tag ${cls}">${txt}</span>
         ${q.status === "pending" ? `<button class="btn small danger" data-lvcancel>取消</button>` : ""}</div>
       <div class="lv-shs">${(q.shiftNames || []).map(n => `<span>${esc(n)}</span>`).join("")}</div>
+      <div class="lv-reason">代班：${esc(subText(q))}</div>
       ${q.reason ? `<div class="lv-reason">原因：${esc(q.reason)}</div>` : ""}
       ${q.status === "rejected" && q.rejectNote ? `<div class="lv-reason bad">退回原因：${esc(q.rejectNote)}</div>` : ""}
+      ${q.status === "pending" ? `<div class="lv-acts"><button class="btn small" data-lvedit>修改</button></div>` : ""}
     </div>`;
   }).join("") || `<div class="card empty-card">還沒有請假紀錄</div>`;
 }
@@ -2304,21 +2313,47 @@ $("#lvSubmit").onclick = async () => {
   if (!ids.length) return toast("請勾選要請假的班別");
   const reason = $("#lvReason").value.trim();
   const type = $("#lvType button.on")?.dataset.v || "事假";
-  if (!(await appConfirm("送出請假", `${dayLabel(lv.date)}・${type}\n${ids.map(id => shiftMap[id]?.name).join("\n")}`, { okText: "送出" }))) return;
+  const subNeed = $("#lvSub button.on")?.dataset.v === "yes";
+  const subName = subNeed ? $("#lvSubName").value.trim() : "";
+  if (subNeed && !subName) return toast("請輸入代班人姓名");
+  const editing = lv.editId;
+  if (!(await appConfirm(editing ? "更新請假" : "送出請假", `${dayLabel(lv.date)}・${type}\n${ids.map(id => shiftMap[id]?.name).join("\n")}\n代班：${subNeed ? subName : "不需代班"}`, { okText: editing ? "更新" : "送出" }))) return;
   $("#lvSubmit").disabled = true;
   try {
-    await addDoc(collection(db, "leaveRequests"), {
-      empId: me.id, name: me.name, empNo: me.empNo || "",
-      date: lv.date, month: lv.date.slice(0, 7), shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""),
-      leaveType: type, reason, status: "pending", createdAt: serverTimestamp()
-    });
-    $("#lvReason").value = "";
-    toast("已送出請假申請，等待管理者審核");
+    const data = { date: lv.date, month: lv.date.slice(0, 7), shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""),
+      leaveType: type, reason, subNeed, subName };
+    if (editing) await updateDoc(doc(db, "leaveRequests", editing), { ...data, status: "pending", empId: me.id, updatedAt: serverTimestamp() });
+    else await addDoc(collection(db, "leaveRequests"), { empId: me.id, name: me.name, empNo: me.empNo || "", ...data, status: "pending", createdAt: serverTimestamp() });
+    resetLvForm();
+    toast(editing ? "已更新請假申請" : "已送出請假申請，等待管理者審核");
     loadMyLeaves();
   } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
   finally { $("#lvSubmit").disabled = false; }
 };
+function setSeg(sel, v) { $$(sel + " button").forEach(x => x.classList.toggle("on", x.dataset.v === v)); }
+function resetLvForm() {
+  lv.editId = null;
+  $("#lvReason").value = ""; $("#lvSubName").value = "";
+  setSeg("#lvSub", "no"); $("#lvSubName").classList.add("hidden");
+  $("#lvSubmit").textContent = "送出請假申請"; $("#lvCancelEdit").classList.add("hidden");
+}
+$("#lvSub").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; setSeg("#lvSub", b.dataset.v); $("#lvSubName").classList.toggle("hidden", b.dataset.v !== "yes"); if (b.dataset.v === "yes") $("#lvSubName").focus(); };
+$("#lvCancelEdit").onclick = () => { resetLvForm(); renderLvShifts(); };
 $("#lvList").onclick = async e => {
+  if (e.target.closest("[data-lvedit]")) {
+    const q = lv.mine.find(x => x.id === e.target.closest(".lv-item").dataset.id);
+    if (!q) return;
+    lv.editId = q.id;
+    setSeg("#lvType", q.leaveType); $("#lvReason").value = q.reason || "";
+    setSeg("#lvSub", q.subNeed ? "yes" : "no"); $("#lvSubName").value = q.subName || ""; $("#lvSubName").classList.toggle("hidden", !q.subNeed);
+    $("#lvSubmit").textContent = "更新請假申請"; $("#lvCancelEdit").classList.remove("hidden");
+    const m = q.date.slice(0, 7);
+    lv.date = q.date;
+    if (m !== lv.month) { lv.month = m; await loadLvMonth(); } else selectLvDay(q.date);
+    $("#view-leave .card").scrollIntoView({ behavior: "smooth" });
+    toast("修改後按「更新請假申請」");
+    return;
+  }
   if (!e.target.closest("[data-lvcancel]")) return;
   const id = e.target.closest(".lv-item").dataset.id;
   if (!(await appConfirm("取消請假", "確定要取消這筆請假申請？", { okText: "取消申請", danger: true }))) return;
@@ -2327,7 +2362,7 @@ $("#lvList").onclick = async e => {
 };
 
 /* ================= 簽核中心（管理者） ================= */
-let ap = { tab: "leave", leave: [], punch: [] };
+let ap = { tab: "leave", leave: [], punch: [], done: [] };
 async function fetchPending() {
   const [l, p] = await Promise.all([
     getDocs(query(collection(db, "leaveRequests"), where("status", "==", "pending"))),
@@ -2338,6 +2373,10 @@ async function fetchPending() {
   setApBadge();
   return ap.leave.length + ap.punch.length;
 }
+async function fetchApproved() {
+  const snap = await getDocs(query(collection(db, "leaveRequests"), where("status", "==", "approved")));
+  ap.done = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 150);
+}
 function setApBadge() {
   const n = ap.leave.length + ap.punch.length;
   ["#apBadge", "#apBadge2", "#apBadge3"].forEach(sel => { const el = $(sel); if (el) { el.textContent = n; el.classList.toggle("hidden", !n); } });
@@ -2345,62 +2384,197 @@ function setApBadge() {
   $("#apN2").textContent = ap.punch.length || "";
 }
 async function loadApprovals() {
-  await fetchPending();
+  await Promise.all([fetchPending(), ap.tab === "done" ? fetchApproved() : null, employees.length ? null : loadEmployees()]);
   renderApprovals();
+}
+function leaveCard(q, done) {
+  return `<div class="card ap-item" data-id="${q.id}">
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag">${esc(q.leaveType)}</span>${done ? `<span class="tag ok">已核准</span>` : ""}</div>
+      <div class="ap-date">${dayLabel(q.date)}・請 ${(q.shiftIds || []).length} 個班</div>
+      <div class="lv-shs">${(q.shiftIds || []).map((sid, i) => `<span>${esc(q.shiftNames?.[i] || shiftMap[sid]?.name || "")}${q.subNames?.[sid] ? ` → <b>${esc(q.subNames[sid])}</b> 代班` : ""}</span>`).join("")}</div>
+      ${Object.keys(q.subNames || {}).length ? "" : `<div class="lv-reason">代班：${q.subNeed ? `${esc(q.subName || "有")}（員工填寫，尚未指定）` : "不需代班"}</div>`}
+      ${q.reason ? `<div class="lv-reason">原因：${esc(q.reason)}</div>` : ""}
+      ${q.editedBy ? `<div class="lv-reason muted">由 ${esc(q.editedBy)} 修改</div>` : ""}
+      <div class="ap-acts">${done
+        ? `<button class="btn" data-ap="edit">修改／代班</button>`
+        : `<button class="btn danger" data-ap="reject">退回</button><button class="btn" data-ap="edit">修改／代班</button><button class="btn primary" data-ap="ok">核准</button>`}</div>
+    </div>`;
 }
 function renderApprovals() {
   $$("#apTab button").forEach(b => b.classList.toggle("on", b.dataset.v === ap.tab));
   const list = ap[ap.tab];
-  $("#apList").innerHTML = list.map(q => ap.tab === "leave" ? `
-    <div class="card ap-item" data-id="${q.id}">
-      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag">${esc(q.leaveType)}</span></div>
-      <div class="ap-date">${dayLabel(q.date)}・請 ${(q.shiftIds || []).length} 個班</div>
-      <div class="lv-shs">${(q.shiftNames || []).map(n => `<span>${esc(n)}</span>`).join("")}</div>
-      ${q.reason ? `<div class="lv-reason">原因：${esc(q.reason)}</div>` : ""}
-      <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准</button></div>
-    </div>` : `
+  const empty = { leave: "目前沒有待審核的請假申請 🎉", punch: "目前沒有待審核的補打卡申請 🎉", done: "還沒有已核准的請假" }[ap.tab];
+  $("#apList").innerHTML = list.map(q => ap.tab !== "punch" ? leaveCard(q, ap.tab === "done") : `
     <div class="card ap-item" data-id="${q.id}">
       <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">補打卡</span></div>
       <div class="ap-date">${dayLabel(q.date)}・${esc(q.shiftName)}</div>
       <div class="ap-what">${q.type === "in" ? "上班" : "下班"} <b>${esc(q.time)}</b></div>
       <div class="lv-reason">原因：${esc(q.reason)}</div>
       <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准</button></div>
-    </div>`).join("") || `<div class="card empty-card">目前沒有待審核的${ap.tab === "leave" ? "請假" : "補打卡"}申請 🎉</div>`;
+    </div>`).join("") || `<div class="card empty-card">${empty}</div>`;
 }
-$("#apTab").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { ap.tab = b.dataset.v; renderApprovals(); } };
+$("#apTab").onclick = async e => {
+  const b = e.target.closest("button[data-v]"); if (!b) return;
+  ap.tab = b.dataset.v; renderApprovals();
+  if (ap.tab === "done") { $("#apList").innerHTML = `<div class="card empty-card">讀取中…</div>`; await fetchApproved(); renderApprovals(); }
+};
+
+/* 套用請假：寫入請假人班表的 leave、把班排給代班人；mode = approve | save | revoke */
+async function applyLeave(q, { ids, type, reason, subs }, mode) {
+  const wasApplied = q.status === "approved";
+  if (mode === "save" && wasApplied && !ids.length) mode = "revoke";
+  const applying = mode === "approve" || (mode === "save" && wasApplied);
+  const month = q.date.slice(0, 7);
+  const batch = writeBatch(db);
+  const leaveObj = {};
+  if (wasApplied) (q.shiftIds || []).forEach(id => { if (!applying || !ids.includes(id)) leaveObj[id] = deleteField(); });
+  if (applying) ids.forEach(id => leaveObj[id] = type);
+  if (Object.keys(leaveObj).length)
+    batch.set(doc(db, "schedules", `${q.empId}_${q.date}`), { empId: q.empId, date: q.date, month, leave: leaveObj }, { merge: true });
+  // 代班
+  const oldAdded = wasApplied ? (q.subAdded || {}) : {};
+  const newAdded = {};
+  if (applying) {
+    for (const sid of ids) {
+      const eid = subs[sid];
+      if (!eid) continue;
+      if (oldAdded[sid] === eid) { newAdded[sid] = eid; continue; }
+      const r = await getDoc(doc(db, "schedules", `${eid}_${q.date}`));
+      if (!(r.exists() && (r.data().shiftIds || []).includes(sid))) {
+        batch.set(doc(db, "schedules", `${eid}_${q.date}`), { empId: eid, date: q.date, month, shiftIds: arrayUnion(sid) }, { merge: true });
+        newAdded[sid] = eid;
+      }
+    }
+  }
+  for (const [sid, eid] of Object.entries(oldAdded))
+    if (newAdded[sid] !== eid) batch.set(doc(db, "schedules", `${eid}_${q.date}`), { shiftIds: arrayRemove(sid) }, { merge: true });
+  const empName = id => employees.find(e => e.id === id)?.name || "";
+  const keepSubs = Object.fromEntries(ids.filter(sid => subs[sid]).map(sid => [sid, subs[sid]]));
+  const upd = {
+    shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""), leaveType: type, reason,
+    subs: keepSubs, subNames: Object.fromEntries(Object.entries(keepSubs).map(([sid, id]) => [sid, empName(id)])),
+    subAdded: newAdded
+  };
+  if (mode === "approve") Object.assign(upd, { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "approved" });
+  if (mode === "revoke") Object.assign(upd, { status: "revoked", subs: {}, subNames: {}, subAdded: {}, editedBy: me.name, editedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "revoked" });
+  if (mode === "save" && wasApplied) Object.assign(upd, { editedBy: me.name, editedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "edited" });
+  batch.update(doc(db, "leaveRequests", q.id), upd);
+  await batch.commit();
+}
+
+// 請假審核／修改視窗
+let lm = null;
+async function openLeaveModal(q) {
+  lm = { q, ids: [] };
+  $("#lmTitle").textContent = q.status === "approved" ? "修改請假" : "審核請假";
+  $("#lmWho").textContent = `${q.name}　${dayLabel(q.date)}`;
+  setSeg("#lmType", q.leaveType); $("#lmReason").value = q.reason || "";
+  $("#lmSubHint").textContent = q.subNeed ? `員工填寫的代班人：${q.subName || "（未填）"}` : "員工填寫：不需代班";
+  $("#lmShifts").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
+  $("#lmActs").innerHTML = q.status === "approved"
+    ? `<button class="btn danger" data-lm="revoke">撤銷這筆請假</button>`
+    : `<button class="btn danger" data-lm="reject">退回</button><button class="btn primary" data-lm="approve">核准</button>`;
+  $("#lvModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#lvModal").classList.add("open"));
+  const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${q.empId}_${q.date}`)), employees.length ? null : loadEmployees()]);
+  const have = sch.exists() ? (sch.data().shiftIds || []) : [];
+  const ids = [...new Set([...have, ...(q.shiftIds || [])])].filter(id => shiftMap[id] && shiftMap[id].cat !== "leave")
+    .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
+  lm.ids = ids;
+  // 員工填的名字對得到員工 → 預設帶入
+  const guess = q.subNeed && q.subName ? activeEmployees().filter(e => e.id !== q.empId && q.subName.includes(e.name)) : [];
+  const opts = activeEmployees().filter(e => e.id !== q.empId);
+  $("#lmShifts").innerHTML = ids.map((id, i) => {
+    const s = shiftMap[id], on = (q.shiftIds || []).includes(id);
+    const cur = q.subs?.[id] || (guess.length === 1 ? guess[0].id : "");
+    return `<div class="lm-row ${on ? "on" : ""}" data-sid="${id}">
+      <label class="lm-chk"><input type="checkbox" ${on ? "checked" : ""}><span class="lv-no" style="background:${esc(s.color || "#8e8e93")}">${i + 1}</span>
+        <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span></label>
+      <select class="lm-sub" ${on ? "" : "disabled"}><option value="">不需代班</option>${opts.map(e => `<option value="${e.id}" ${e.id === cur ? "selected" : ""}>代班：${esc(e.name)}</option>`).join("")}</select>
+    </div>`;
+  }).join("") || `<p class="empty" style="padding:14px">這天沒有排班</p>`;
+}
+function closeLeaveModal() { $("#lvModal").classList.remove("open"); setTimeout(() => $("#lvModal").classList.add("hidden"), 200); }
+function lmData() {
+  const ids = [], subs = {};
+  $$("#lmShifts .lm-row").forEach(r => {
+    if (!r.querySelector("input").checked) return;
+    ids.push(r.dataset.sid);
+    const v = r.querySelector("select").value; if (v) subs[r.dataset.sid] = v;
+  });
+  return { ids, subs, type: $("#lmType button.on")?.dataset.v || lm.q.leaveType, reason: $("#lmReason").value.trim() };
+}
+$("#lmShifts").onchange = e => {
+  const r = e.target.closest(".lm-row"); if (!r || e.target.type !== "checkbox") return;
+  r.classList.toggle("on", e.target.checked); r.querySelector("select").disabled = !e.target.checked;
+};
+$("#lmType").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) setSeg("#lmType", b.dataset.v); };
+async function lmRun(mode, btn) {
+  const q = lm.q, d = lmData();
+  if (mode !== "revoke" && mode !== "reject" && !d.ids.length) return toast("請至少勾選一個班別");
+  try {
+    if (mode === "reject") {
+      const note = await appDialog({ title: "退回申請", message: `${q.name}・${dayLabel(q.date)} ${q.leaveType}`, input: { type: "text", placeholder: "退回原因（選填，員工會看到）" },
+        buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
+      if (note === false) return;
+      await updateDoc(doc(db, "leaveRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "rejected" });
+      toast("已退回");
+    } else {
+      if (mode === "revoke" && !(await appConfirm("撤銷請假", `${q.name}・${dayLabel(q.date)}\n撤銷後恢復原本的班，代班人的班也會移除。`, { okText: "撤銷", danger: true }))) return;
+      if (btn) btn.disabled = true;
+      await applyLeave(q, d, mode);
+      toast({ approve: "已核准", save: "已儲存", revoke: "已撤銷請假" }[mode]);
+    }
+    closeLeaveModal();
+    await loadApprovals();
+  } catch (err) { appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+  finally { if (btn) btn.disabled = false; }
+}
+$("#lmSave").onclick = e => lmRun("save", e.currentTarget);
+$("#lmActs").onclick = e => { const b = e.target.closest("[data-lm]"); if (b) lmRun(b.dataset.lm, b); };
+$("#lvModal").onclick = e => { if (e.target.id === "lvModal" || e.target.closest("[data-close]")) closeLeaveModal(); };
+
 $("#apList").onclick = async e => {
   const b = e.target.closest("[data-ap]");
   if (!b) return;
   const q = ap[ap.tab].find(x => x.id === b.closest(".ap-item").dataset.id);
   if (!q) return;
-  const coll = ap.tab === "leave" ? "leaveRequests" : "punchRequests";
-  const title = ap.tab === "leave" ? `${q.name}・${dayLabel(q.date)} ${q.leaveType}` : `${q.name}・${dayLabel(q.date)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`;
+  if (ap.tab !== "punch") {
+    if (b.dataset.ap === "edit") return openLeaveModal(q);
+    lm = { q };
+    if (b.dataset.ap === "reject") return lmRun("reject");
+    // 快速核准：帶入已指定的代班
+    let subs = q.subs || {};
+    if (!Object.keys(subs).length && q.subNeed && q.subName) {   // 員工填的名字剛好對到一位員工 → 直接排給他
+      if (!employees.length) await loadEmployees();
+      const g = activeEmployees().filter(x => x.id !== q.empId && q.subName.includes(x.name));
+      if (g.length === 1) subs = Object.fromEntries((q.shiftIds || []).map(sid => [sid, g[0].id]));
+    }
+    try { b.disabled = true; await applyLeave(q, { ids: q.shiftIds || [], type: q.leaveType, reason: q.reason || "", subs }, "approve"); toast(`已核准：${q.name}・${dayLabel(q.date)} ${q.leaveType}`); await loadApprovals(); }
+    catch (err) { b.disabled = false; appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+    return;
+  }
+  const title = `${q.name}・${dayLabel(q.date)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`;
   try {
     if (b.dataset.ap === "ok") {
       b.disabled = true;
       const batch = writeBatch(db);
-      if (ap.tab === "leave") {
-        const leave = {};
-        (q.shiftIds || []).forEach(id => leave[id] = q.leaveType);
-        batch.set(doc(db, "schedules", `${q.empId}_${q.date}`), { empId: q.empId, date: q.date, month: q.date.slice(0, 7), leave }, { merge: true });
-      } else {
-        const t = new Date(`${q.date}T${q.time}:00`);
-        batch.set(doc(db, "attendance", `mk_${q.id}`), {
-          empId: q.empId, name: q.name, empNo: q.empNo || "", type: q.type,
-          shiftId: q.shiftId || null, shiftName: q.shiftName || "", locationId: null, dist: null,
-          date: q.date, month: q.date.slice(0, 7), ts: t, clientTime: t.toISOString(),
-          lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `補打卡（${q.reason}）`,
-          makeup: true, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
-        });
-      }
-      batch.update(doc(db, coll, q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
+      const t = new Date(`${q.date}T${q.time}:00`);
+      batch.set(doc(db, "attendance", `mk_${q.id}`), {
+        empId: q.empId, name: q.name, empNo: q.empNo || "", type: q.type,
+        shiftId: q.shiftId || null, shiftName: q.shiftName || "", locationId: null, dist: null,
+        date: q.date, month: q.date.slice(0, 7), ts: t, clientTime: t.toISOString(),
+        lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `補打卡（${q.reason}）`,
+        makeup: true, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
+      });
+      batch.update(doc(db, "punchRequests", q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
       await batch.commit();
       toast(`已核准：${title}`);
     } else {
       const note = await appDialog({ title: "退回申請", message: title, input: { type: "text", placeholder: "退回原因（選填，員工會看到）" },
         buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
       if (note === false) return;
-      await updateDoc(doc(db, coll, q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
+      await updateDoc(doc(db, "punchRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
       toast("已退回");
     }
     await loadApprovals();

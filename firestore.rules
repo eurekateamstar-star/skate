@@ -56,13 +56,15 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // 請假申請：員工送出、可取消審核中的；管理者審核
+    // 請假申請：員工送出、可修改／取消審核中的；管理者審核、修改、指定代班
     match /leaveRequests/{id} {
       allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
       allow create: if bound()
                     && request.resource.data.empId == myEmpId()
                     && request.resource.data.status == 'pending';
-      allow update: if isAdmin();
+      allow update: if isAdmin()
+                    || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending'
+                        && request.resource.data.empId == myEmpId() && request.resource.data.status == 'pending');
       allow delete: if isAdmin() || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending');
     }
 
