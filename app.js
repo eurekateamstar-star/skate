@@ -6,14 +6,14 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=34";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=35";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 // LINE App 內建瀏覽器用 long polling 連線，避免 Firestore 卡住
 const IN_LINE = /\bLine\//i.test(navigator.userAgent);
 const db = initializeFirestore(app, IN_LINE ? { experimentalForceLongPolling: true } : { experimentalAutoDetectLongPolling: true });
-const liff = window.liff;
+let liff = null;   // LINE SDK：只有需要登入時才載入，已登入者不必等
 
 /* ================= 工具 ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -136,17 +136,64 @@ function firstView() {
   if (v === "mySchedule" && START.mode === "all") mySchMode = "all";
   return v;
 }
-async function boot() {
-  loading();
-  liffReady = withTimeout(liff.init({ liffId: LIFF_ID }), 15000, "LINE 初始化逾時")
+function getLiff() {
+  return liffReady ??= new Promise((res, rej) => {
+    if (window.liff) return res();
+    const sc = document.createElement("script");
+    sc.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
+    sc.onload = res; sc.onerror = () => rej(new Error("LINE SDK 載入失敗"));
+    document.head.appendChild(sc);
+  }).then(() => { liff = window.liff; return withTimeout(liff.init({ liffId: LIFF_ID }), 15000, "LINE 初始化逾時"); })
     .then(() => true).catch(e => { liffErr = e; return false; });
-  // 已有 Firebase 登入狀態就直接進入（不必等 LINE）
-  const user = await new Promise(res => { const un = onAuthStateChanged(auth, u => { un(); res(u); }); });
+}
+
+// 資料讀取要等登入狀態確認後才開始
+let authOk;
+const authReady = new Promise(r => authOk = r);
+
+async function boot() {
+  const cache = readCache();
+  const authUser = new Promise(res => { const un = onAuthStateChanged(auth, u => { un(); res(u); }); });
+
+  // 秒開：有快取就先顯示畫面，背景再確認登入
+  if (cache?.me && cache.uid) {
+    me = cache.me;
+    shiftTypes = cache.shiftTypes || [];
+    shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
+    locations = cache.locations || [];
+    locMap = Object.fromEntries(locations.map(l => [l.id, l]));
+    showShell();
+    $("#loginView").classList.add("hidden");
+    $("#appView").classList.remove("hidden");
+    showView(firstView());
+    const user = await authUser;
+    if (user && user.uid === cache.uid) {
+      const { claims } = await user.getIdTokenResult().catch(() => ({ claims: {} }));
+      if (claims.empId === cache.me.id) {
+        authOk();
+        verifyMe(user, claims.empId).then(showShell).catch(async err => {
+          console.error(err);
+          if (err.code === "unbound" || err.code === "permission-denied") {
+            clearCache(); await signOut(auth); me = null;
+            setMsg("你的帳號已停用或解除綁定，請重新登入");
+            showLogin();
+          }
+        });
+        return;
+      }
+    }
+    // 快取對不上 → 回到正常登入流程
+    me = null; clearCache();
+    $("#appView").classList.add("hidden");
+  }
+
+  loading();
+  const user = await authUser;
   if (user) {
     if (await enterApp(user)) return;
     if ($("#authMsg").textContent) return showLogin();   // 顯示失敗原因，按按鈕重試
   }
-  if (!(await liffReady)) {
+  if (!(await getLiff())) {
     setMsg("LINE 初始化失敗，請確認 config.js 的 LIFF_ID：" + (liffErr?.message || ""));
     return showLogin();
   }
@@ -155,6 +202,7 @@ async function boot() {
 }
 
 async function callWorker(path, data = {}) {
+  if (!(await getLiff())) throw new Error("LINE 初始化失敗：" + (liffErr?.message || ""));
   const idToken = liff.getIDToken();
   if (!idToken) {
     if (liff.isInClient()) throw new Error("取不到 LINE 身分，請確認 LIFF 的 Scopes 有勾 openid");
@@ -248,7 +296,7 @@ async function finishLogin(token) {
 
 $("#lineLoginBtn").onclick = async () => {
   setMsg("");
-  if (liffReady && !(await liffReady)) return setMsg("LINE 初始化失敗：" + (liffErr?.message || ""));
+  if (!(await getLiff())) return setMsg("LINE 初始化失敗：" + (liffErr?.message || ""));
   if (!liff.isLoggedIn()) liff.login({ redirectUri: redirectUri() });
   else lineAuth();
 };
@@ -291,7 +339,7 @@ $("#bindForm").onsubmit = async e => {
 $("#logoutBtn").onclick = async () => {
   await signOut(auth);
   clearCache();
-  try { if (await liffReady && liff.isLoggedIn() && !liff.isInClient()) liff.logout(); } catch {}
+  try { if (liffReady && await liffReady && liff.isLoggedIn() && !liff.isInClient()) liff.logout(); } catch {}
   me = null;
   setMsg("");
   showLogin();
@@ -311,7 +359,7 @@ async function enterApp(user) {
 // 本機快取：第二次開啟立即顯示，背景再確認
 const CACHE_KEY = "punch_cache_v1";
 const readCache = () => { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; } };
-const writeCache = () => { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: auth.currentUser?.uid, me, shiftTypes })); } catch {} };
+const writeCache = () => { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: auth.currentUser?.uid, me, shiftTypes, locations })); } catch {} };
 const clearCache = () => { try { localStorage.removeItem(CACHE_KEY); } catch {} };
 
 function showShell() {
@@ -342,6 +390,7 @@ async function enterAppInner(user) {
       showShell();
       $("#loginView").classList.add("hidden");
       $("#appView").classList.remove("hidden");
+      authOk();
       showView(firstView());
       verifyMe(user, claims.empId).then(showShell).catch(async err => {
         console.error(err);
@@ -357,6 +406,7 @@ async function enterAppInner(user) {
     showShell();
     $("#loginView").classList.add("hidden");
     $("#appView").classList.remove("hidden");
+    authOk();
     showView(firstView());
     return true;
   } catch (err) {
@@ -394,7 +444,8 @@ function showView(name) {
   scrollTo(0, 0);
   if (name === "scheduling" && !$("#view-scheduling").dataset.keep) schMode = "list";
   if (name !== "clock") stopGeo();
-  loaders[name]?.().catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); });
+  if (name === "clock") renderClockCache();
+  authReady.then(() => loaders[name]?.()).catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); });
 }
 $$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));
 
@@ -535,10 +586,29 @@ let cMap = null, cLayer = null, mapFitted = false;
 const punchIds = () => [...new Set([...clockShifts, ...extraShifts])].filter(id => shiftMap[id])
   .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
 
+const CLOCK_KEY = "punch_clock_v1";
+function saveClockCache() {
+  try {
+    localStorage.setItem(CLOCK_KEY, JSON.stringify({ date: ymd(new Date()), emp: me.id, shifts: clockShifts,
+      recs: todayRecs.map(r => ({ type: r.type, shiftId: r.shiftId, t: +r.t, outOfRange: !!r.outOfRange })) }));
+  } catch {}
+}
+function renderClockCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CLOCK_KEY) || "null");
+    if (!c || c.date !== ymd(new Date()) || c.emp !== me?.id) return;
+    clockShifts = c.shifts || [];
+    todayRecs = (c.recs || []).map(r => ({ ...r, t: new Date(r.t) }));
+    renderPunchCards();
+  } catch {}
+  startGeo();   // 定位也先開始，不必等資料
+}
 async function loadClock() {
   const today = ymd(new Date());
   const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${me.id}_${today}`)), loadToday(), loadLocations()]);
   clockShifts = sch.exists() ? sch.data().shiftIds || [] : [];
+  saveClockCache();
+  writeCache();
   mapFitted = false;
   renderPunchCards();
   startGeo();
@@ -665,6 +735,7 @@ async function punch(type, sid) {
     navigator.vibrate?.(30);
     toast(`${s?.name || ""} ${type === "in" ? "上班" : "下班"}打卡成功 ${hm(now)}${reason ? "（範圍外）" : ""}`);
     await loadToday();
+    saveClockCache();
   } catch (err) {
     console.error(err);
     if (err.code === "permission-denied") {
