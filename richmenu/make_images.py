@@ -13,7 +13,7 @@ THEMES={
 THEMES.update({
  # 曜石：純黑、紅色光暈、細邊框
  "K1":dict(BG=(10,10,11),ACC=(235,28,46),TXT=(246,246,247),MUT=(132,132,138),TINT=None,CARD=(22,22,24),CARDLINE=(44,44,48),HDON=(10,10,11),HDOFF=(20,20,22),HTON=(255,255,255),HTOFF=(98,98,104),UL=(235,28,46),
-           G1=(30,30,33),G2=(14,14,15),BIGLINE=(70,20,26),GLOW=(235,28,46),GLOWA=170,BIGICON=(255,255,255),BIGSUB=(150,150,156),BIGBAR=(235,28,46),CHEV=(70,70,76)),
+           G1=(30,30,33),G2=(14,14,15),BIGLINE=(70,20,26),GLOW=(235,28,46),GLOWA=215,GLOWR=430,BIGICON=(255,255,255),BIGSUB=(150,150,156),BIGBAR=(235,28,46),CHEV=(70,70,76)),
  # 炭黑紅漸層：大按鈕黑到深紅斜漸層
  "K2":dict(BG=(18,18,20),ACC=(240,44,60),TXT=(245,245,247),MUT=(140,140,146),TINT=(48,20,24),CARD=(32,32,35),HDON=(18,18,20),HDOFF=(30,30,33),HTON=(255,255,255),HTOFF=(110,110,116),UL=(240,44,60),
            G1=(150,8,26),G2=(26,10,12),DIAG=True,BIGSUB=(230,190,194),RING=(255,255,255),RINGW=5,CHEV=(80,80,86)),
@@ -26,7 +26,7 @@ THEMES.update({
 })
 def use(name):
     globals().update(THEMES[name]); globals()["BLUE"]=ACC
-use("blue")
+use("K1")
 import os; OUT=os.path.dirname(os.path.abspath(__file__))+"/"
 
 def icon(d,kind,cx,cy,s,col,w):
@@ -110,7 +110,7 @@ def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False,row=False):
         d=ImageDraw.Draw(img)
         if G("BIGLINE"): d.rounded_rectangle([x0+m,y0+m,x1-m,y1-m],radius=R+10,outline=BIGLINE,width=G("BIGLW",4))
         cx=(x0+x1)/2; cy=(y0+y1)/2
-        if G("GLOW"): glow(img,int(cx),int(cy-150),260,GLOW,G("GLOWA",150)); d=ImageDraw.Draw(img)
+        if G("GLOW"): glow(img,int(cx),int(cy-150),G("GLOWR",260),GLOW,G("GLOWA",150)); d=ImageDraw.Draw(img)
         if G("RING"): d.ellipse([cx-215,cy-365,cx+215,cy+65],outline=RING,width=G("RINGW",6))
         fg=G("BIGFG") or (255,255,255)
         icon(d,kind,cx,cy-150,330 if not G("RING") else 290,G("BIGICON") or fg,30 if not G("RING") else 26)
