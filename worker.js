@@ -69,8 +69,8 @@ export default {
         if (emp) return json({ error: "disabled" }, 403);
         const candidates = (await fs.listEmployees())
           .filter(e => e.active !== false && !e.lineUid)
-          .map(e => ({ id: e.id, name: e.name || "", empNo: e.empNo || "" }))
-          .sort((a, b) => (a.empNo || "zzz").localeCompare(b.empNo || "zzz") || a.name.localeCompare(b.name));
+          .sort((a, b) => (a.empNo || "zzz").localeCompare(b.empNo || "zzz") || (a.name || "").localeCompare(b.name || ""))
+          .map(e => ({ id: e.id, name: e.name || "" }));   // 員編只給後台看
         return json({ bound: false, lineName: line.name || "", candidates });
       }
 

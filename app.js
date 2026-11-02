@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=48";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=49";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -271,7 +271,7 @@ async function lineAuth() {
     $("#lineName").textContent = d.lineName || "";
     const list = d.candidates || [];
     $("#candList").innerHTML = list.length
-      ? list.map(c => `<button class="cand" data-id="${esc(c.id)}" data-name="${esc(c.name)}">${esc(c.name)}${c.empNo ? `<small>${esc(c.empNo)}</small>` : ""}</button>`).join("")
+      ? list.map(c => `<button class="cand" data-id="${esc(c.id)}" data-name="${esc(c.name)}">${esc(c.name)}</button>`).join("")
       : `<p class="empty">目前沒有可綁定的員工，請聯絡管理者先建立你的資料。</p>`;
     showLogin("stepPick");
   } catch (e) {
@@ -1124,10 +1124,10 @@ function renderTeam(month, pub) {
   const wk = d => (d.getDay() === 0 || d.getDay() === 6) ? "wkend" : "";
   const cellIds = (eid, ds) => (pub.grid?.[eid]?.[ds]) || [];
   // 電腦：表格
-  let html = `<thead><tr><th class="name">姓名 / 員編</th>${days.map(d =>
+  let html = `<thead><tr><th class="name">姓名</th>${days.map(d =>
     `<th class="${wk(d)}"${ymd(d) === today ? ' style="color:var(--primary)"' : ""}>${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）</th>`).join("")}</tr></thead><tbody>`;
   for (const u of pub.emps || []) {
-    html += `<tr class="${u.id === me.id ? "me" : ""}"><td class="name">${esc(u.name)}<div class="emp-no">${esc(u.empNo || "")}</div></td>`;
+    html += `<tr class="${u.id === me.id ? "me" : ""}"><td class="name">${esc(u.name)}</td>`;
     for (const d of days) html += `<td class="${wk(d)}">${cellIds(u.id, ymd(d)).map(id => chipHtml(id)).join("")}</td>`;
     html += "</tr>";
   }
@@ -1168,7 +1168,7 @@ async function loadStaff() {
 async function syncStaff() {
   if (me?.role !== "admin") return;
   if (!employees.length) await loadEmployees();
-  const list = activeEmployees().map(e => ({ id: e.id, name: e.name || "", empNo: e.empNo || "" }));
+  const list = activeEmployees().map(e => ({ id: e.id, name: e.name || "" }));
   const d = await getDoc(doc(db, "meta", "staff"));
   if (JSON.stringify(d.exists() ? d.data().list : null) !== JSON.stringify(list)) await setDoc(doc(db, "meta", "staff"), { list, updatedAt: serverTimestamp() });
   staff = list;
@@ -1846,7 +1846,7 @@ $("#publishBtn").onclick = async () => {
       });
       await setDoc(doc(db, "rosterPublic", month), {
         name: roster.name, month, grid, publishedAt: serverTimestamp(),
-        emps: emps.map(u => ({ id: u.id, name: u.name || "", empNo: u.empNo || "" }))
+        emps: emps.map(u => ({ id: u.id, name: u.name || "" }))
       });
     } else {
       await deleteDoc(doc(db, "rosterPublic", month)).catch(() => {});
@@ -3275,8 +3275,6 @@ async function drawPayslip(d) {
   // 員工
   c.fillStyle = "#f5f5f7"; c.beginPath(); c.roundRect(P, 210, W - P * 2, 110, 20); c.fill();
   c.fillStyle = "#1d1d1f"; c.font = `700 40px ${F}`; c.fillText(d.name || "", P + 32, 278);
-  c.fillStyle = "#86868b"; c.font = `500 28px ${F}`; c.textAlign = "right";
-  c.fillText(d.empNo ? `員編 ${d.empNo}` : "", W - P - 32, 276); c.textAlign = "left";
   // 表格
   let yy = 390;
   const col = [P, W - P - 430, W - P - 230, W - P];
