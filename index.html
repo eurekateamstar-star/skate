@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=40">
+  <link rel="stylesheet" href="style.css?v=41">
 </head>
 <body>
 
@@ -137,7 +137,7 @@
             </div></div>
           <div class="field"><label class="lv-label">代班</label>
             <div class="seg wide" id="lvSub"><button data-v="no" class="on">不需代班</button><button data-v="yes">有代班的人</button></div>
-            <input id="lvSubName" class="lv-subname hidden" placeholder="代班人姓名，例：王小明"></div>
+            <p class="hint lv-subhint hidden" id="lvSubHint">在上面每個勾選的班別下方選代班人，那個時段已經有班的人不能選</p></div>
           <div class="field"><label class="lv-label">原因</label><textarea id="lvReason" rows="2" placeholder="例：家裡有事、身體不舒服"></textarea></div>
           <button class="btn primary lv-submit" id="lvSubmit">送出請假申請</button>
           <button class="btn link lv-cancel-edit hidden" id="lvCancelEdit">取消修改</button>
@@ -643,6 +643,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=40"></script>
+<script type="module" src="app.js?v=41"></script>
 </body>
 </html>

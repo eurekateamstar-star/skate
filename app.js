@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=40";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=41";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -85,6 +85,7 @@ let me = null;          // 目前登入的員工 {id, name, empNo, role, ...}
 let shiftTypes = [];
 let shiftMap = {};
 let employees = [];     // 員工清單（管理者用）
+let staff = [];         // 員工名單（只有 id／姓名，所有人可讀，選代班用）
 
 function shiftHours(s) {
   if (!s.start || !s.end) return "";
@@ -1156,8 +1157,24 @@ async function loadEmployees() {
 }
 const activeEmployees = () => employees.filter(e => e.active !== false);
 
+async function loadStaff() {
+  if (staff.length) return staff;
+  const d = await getDoc(doc(db, "meta", "staff"));
+  staff = d.exists() ? (d.data().list || []) : [];
+  return staff;
+}
+// 管理者：把在職員工姓名同步到 meta/staff，讓員工選代班人
+async function syncStaff() {
+  if (me?.role !== "admin") return;
+  if (!employees.length) await loadEmployees();
+  const list = activeEmployees().map(e => ({ id: e.id, name: e.name || "", empNo: e.empNo || "" }));
+  const d = await getDoc(doc(db, "meta", "staff"));
+  if (JSON.stringify(d.exists() ? d.data().list : null) !== JSON.stringify(list)) await setDoc(doc(db, "meta", "staff"), { list, updatedAt: serverTimestamp() });
+  staff = list;
+}
 async function loadEmployeesView() {
   await loadEmployees();
+  syncStaff().catch(() => {});
   $("#empList").innerHTML = employees.map(u => {
     const locked = (u.bindFails || 0) >= 5;
     const lineCell = u.lineUid
@@ -1940,7 +1957,8 @@ function renderDay() {
   const W = `週${WEEK[wd]}`;
   $("#dpCurrent").innerHTML = ids.map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
 
-  const recF = rec.filter(r => !ids.includes(r.id) && shiftMap[r.id]).slice(0, 8);
+  const workNow = workIds(ids, schedLeave[dp.key]);
+  const recF = rec.filter(r => !ids.includes(r.id) && shiftMap[r.id] && !clashWith(r.id, workNow)).slice(0, 8);
   $("#dpRecWrap").classList.toggle("hidden", !recF.length);
   $("#dpRecNote").textContent = recF[0]?.src === "others" ? `他還沒有紀錄，參考其他人${W}的排班` : `依他過去 6 個月的排班`;
   $("#dpRec").innerHTML = recF.map(r => {
@@ -1968,15 +1986,20 @@ function renderDay() {
     let head = "";
     if (!f && sc > 0 && !shownHot) { shownHot = true; head = `<div class="list-head">常排班別</div>`; }
     if (!f && sc === 0 && shownHot && !shownRest) { shownRest = true; head = `<div class="list-head">其他班別</div>`; }
-    return `${head}<label class="check-item ${mineAll[s.id] ? "hot" : ""}"><input type="checkbox" data-sid="${s.id}" ${ids.includes(s.id) ? "checked" : ""}>
+    const clash = !ids.includes(s.id) && clashWith(s.id, workNow);
+    return `${head}<label class="check-item ${mineAll[s.id] ? "hot" : ""} ${clash ? "clash" : ""}"><input type="checkbox" data-sid="${s.id}" ${ids.includes(s.id) ? "checked" : ""} ${clash ? "disabled" : ""}>
       <span class="dot" style="background:${esc(s.color)}"></span>
-      <span class="ci-main"><span class="ci-name">${esc(s.name)}</span>${sub ? `<span class="ci-sub">${sub}</span>` : ""}</span></label>`;
+      <span class="ci-main"><span class="ci-name">${esc(s.name)}</span>${clash ? `<span class="ci-sub clash-why">時段衝突：已排「${esc(shiftMap[clash].name)}」</span>` : sub ? `<span class="ci-sub">${sub}</span>` : ""}</span></label>`;
   }).join("") || `<p class="empty">找不到班別</p>`;
 }
 async function setDayShift(id, on) {
   if (!dp) return;
   let ids = [...(schedMap[dp.key] || [])];
-  if (on && !ids.includes(id)) ids.push(id);
+  if (on && !ids.includes(id)) {
+    const c = clashWith(id, workIds(ids, schedLeave[dp.key]));
+    if (c) { toast(`時段衝突：已排「${shiftMap[c].name}」`); renderDay(); return; }
+    ids.push(id);
+  }
   if (!on) ids = ids.filter(x => x !== id);
   // 畫面若已重繪，找回對應格子
   await saveCell(dp.key, ids, dp.cell);
@@ -1996,7 +2019,7 @@ async function saveCell(key, ids, cell) {
   const empId = key.slice(0, i), date = key.slice(i + 1);
   try {
     if (ids.length) {
-      await setDoc(doc(db, "schedules", key), { empId, date, month: date.slice(0, 7), shiftIds: ids });
+      await setDoc(doc(db, "schedules", key), { empId, date, month: date.slice(0, 7), shiftIds: ids }, { merge: true });
     } else {
       await deleteDoc(doc(db, "schedules", key));
     }
@@ -2194,6 +2217,32 @@ $("#newRosterBtn").onclick = async () => {
 /* ================= 出勤報表（管理者） ================= */
 let reportRows = [];
 const minOf = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+/* ---- 時段衝突檢查 ---- */
+function shiftsOverlap(a, b) {
+  const A = shiftMap[a], B = shiftMap[b];
+  if (!A || !B || A.cat === "leave" || B.cat === "leave" || !A.start || !A.end || !B.start || !B.end) return false;
+  let a1 = minOf(A.start), a2 = minOf(A.end), b1 = minOf(B.start), b2 = minOf(B.end);
+  if (a2 <= a1) a2 += 1440; if (b2 <= b1) b2 += 1440;
+  return a1 < b2 && b1 < a2;
+}
+// sid 跟 ids 裡哪一個班衝突（同一班也算）
+const clashWith = (sid, ids) => ids.find(x => x === sid || shiftsOverlap(sid, x));
+// 某人當天「實際要上」的班（扣掉已請假的）
+const workIds = (ids, leave) => (ids || []).filter(x => !leave?.[x] && shiftMap[x] && shiftMap[x].cat !== "leave");
+// 檢查代班安排：subs {shiftId: empId}，day {empId: {ids, leave}}，ignore {shiftId: empId}（這筆請假之前排進去的）
+function subProblems(subs, day, ignore = {}) {
+  const out = [], plan = {};
+  for (const [sid, eid] of Object.entries(subs)) {
+    if (!eid) continue;
+    const d = day[eid] || {};
+    const has = workIds(d.ids, d.leave).filter(x => !(ignore[x] === eid && x === sid));
+    const c = clashWith(sid, has) || clashWith(sid, plan[eid] || []);
+    if (c) out.push(`${empNameOf(eid)} 在 ${shiftMap[sid]?.name || ""} 的時段已經有班（${shiftMap[c]?.name || ""}）`);
+    (plan[eid] ??= []).push(sid);
+  }
+  return out;
+}
+const empNameOf = id => employees.find(e => e.id === id)?.name || staff.find(e => e.id === id)?.name || "";
 
 // 單筆打卡的細項
 function punchDetail(r, kind, plan, ds) {
@@ -2227,7 +2276,7 @@ let lv = { month: null, date: null, sch: undefined, monthSch: {}, mine: [] };
 
 async function loadLeaveView() {
   if (!lv.month) { const t = ymd(new Date()); lv.month = t.slice(0, 7); lv.date = t; }
-  await Promise.all([loadLvMonth(), loadMyLeaves()]);
+  await Promise.all([loadLvMonth(), loadMyLeaves(), loadStaff().catch(() => [])]);
 }
 async function loadMyLeaves() {
   const snap = await getDocs(query(collection(db, "leaveRequests"), where("empId", "==", me.id)));
@@ -2274,19 +2323,57 @@ function selectLvDay(ds) {
   $$("#lvCal .rday").forEach(x => x.classList.toggle("sel", x.dataset.ds === ds));
   renderLvShifts();
 }
+const lvSubOn = () => $("#lvSub button.on")?.dataset.v === "yes";
 function renderLvShifts() {
   if (!lv.date || lv.sch === undefined) return;
   const ids = lvWorkIds(lv.sch);
   if (!ids.length) { $("#lvShifts").innerHTML = `<p class="empty" style="padding:14px">這天沒有排班</p>`; $("#lvSubmit").disabled = true; return; }
   const taken = id => lv.sch?.leave?.[id] ? "已請假" : lv.mine.some(q => q.id !== lv.editId && q.date === lv.date && q.status === "pending" && (q.shiftIds || []).includes(id)) ? "審核中" : "";
-  const pre = lv.editId ? (lv.mine.find(q => q.id === lv.editId)?.date === lv.date ? lv.mine.find(q => q.id === lv.editId).shiftIds || [] : []) : [];
+  const eq = lv.editId ? lv.mine.find(q => q.id === lv.editId) : null;
+  const pre = eq?.date === lv.date ? eq.shiftIds || [] : [];
+  const preSubs = eq?.date === lv.date ? eq.subs || {} : {};
   $("#lvShifts").innerHTML = ids.map((id, i) => {
-    const s = shiftMap[id], t = taken(id);
-    return `<label class="lv-shift ${t ? "taken" : ""}"><input type="checkbox" value="${id}" ${t ? "disabled" : ""} ${!t && pre.includes(id) ? "checked" : ""}>
+    const s = shiftMap[id], t = taken(id), on = !t && pre.includes(id);
+    return `<div class="lv-row ${on ? "on" : ""}" data-sid="${id}"><label class="lv-shift ${t ? "taken" : ""}"><input type="checkbox" value="${id}" ${t ? "disabled" : ""} ${on ? "checked" : ""}>
       <span class="lv-no" style="background:${esc(s.color || "#8e8e93")}">${i + 1}</span>
-      <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span>${t ? `<span class="tag ${t === "已請假" ? "ok" : "warn"}">${t}</span>` : ""}</label>`;
+      <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span>${t ? `<span class="tag ${t === "已請假" ? "ok" : "warn"}">${t}</span>` : ""}</label>
+      ${t ? "" : `<select class="lv-subsel" data-pre="${esc(preSubs[id] || "")}"><option value="">此班不需代班</option></select>`}</div>`;
   }).join("") + (ids.length > 1 ? `<button class="btn link lv-all" id="lvAll">全部勾選</button>` : "");
   $("#lvSubmit").disabled = ids.every(id => taken(id));
+  $("#lvShifts").classList.toggle("subon", lvSubOn());
+  if (lvSubOn()) loadLvSubDay();
+}
+// 讀取當天所有人的班，用來判斷誰能代班
+async function loadLvSubDay(force) {
+  const date = lv.date;
+  lv.days ??= {};
+  await loadStaff();
+  if (!staff.length) { $("#lvSubHint").textContent = "員工名單還沒建立，請管理員開啟一次系統後再試"; }
+  if (force || !lv.days[date]) {
+    const others = staff.filter(e => e.id !== me.id);
+    const docs = await Promise.all(others.map(e => getDoc(doc(db, "schedules", `${e.id}_${date}`)).catch(() => null)));
+    const day = {};
+    docs.forEach((d, i) => { if (d?.exists()) day[others[i].id] = { ids: d.data().shiftIds || [], leave: d.data().leave || {} }; });
+    lv.days[date] = day;
+  }
+  if (date === lv.date) refreshLvSubs();
+}
+function refreshLvSubs() {
+  const day = lv.days?.[lv.date] || {};
+  const rows = $$("#lvShifts .lv-row");
+  const chosen = rows.filter(r => r.classList.contains("on")).map(r => ({ sid: r.dataset.sid, eid: r.querySelector("select")?.value || r.querySelector("select")?.dataset.pre }));
+  rows.forEach(r => {
+    const sel = r.querySelector("select"); if (!sel) return;
+    const sid = r.dataset.sid, cur = sel.value || sel.dataset.pre || "";
+    sel.innerHTML = `<option value="">此班不需代班</option>` + staff.filter(e => e.id !== me.id).map(e => {
+      const d = day[e.id] || {};
+      const c = clashWith(sid, workIds(d.ids, d.leave))
+        || chosen.find(x => x.sid !== sid && x.eid === e.id && shiftsOverlap(sid, x.sid))?.sid;
+      return `<option value="${e.id}" ${c ? "disabled" : ""}>${esc(e.name)}${c ? `（這時段有班：${esc(shiftMap[c]?.name || "")}）` : ""}</option>`;
+    }).join("");
+    sel.value = cur && !sel.querySelector(`option[value="${CSS.escape(cur)}"]`)?.disabled ? cur : "";
+    sel.dataset.pre = "";
+  });
 }
 function renderMyLeaves() {
   $("#lvList").innerHTML = lv.mine.slice(0, 30).map(q => {
@@ -2307,21 +2394,33 @@ $("#lvPrev").onclick = () => lvMove(-1);
 $("#lvNext").onclick = () => lvMove(1);
 $("#lvCal").onclick = e => { const c = e.target.closest(".rday"); if (c) selectLvDay(c.dataset.ds); };
 $("#lvType").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) $$("#lvType button").forEach(x => x.classList.toggle("on", x === b)); };
-$("#lvShifts").onclick = e => { if (e.target.id === "lvAll") { e.preventDefault(); $$("#lvShifts input:not(:disabled)").forEach(i => i.checked = true); } };
+$("#lvShifts").onclick = e => { if (e.target.id === "lvAll") { e.preventDefault(); $$("#lvShifts input:not(:disabled)").forEach(i => { i.checked = true; i.closest(".lv-row").classList.add("on"); }); refreshLvSubs(); } };
+$("#lvShifts").onchange = e => {
+  if (e.target.type === "checkbox") e.target.closest(".lv-row").classList.toggle("on", e.target.checked);
+  refreshLvSubs();
+};
 $("#lvSubmit").onclick = async () => {
   const ids = $$("#lvShifts input:checked").map(i => i.value);
   if (!ids.length) return toast("請勾選要請假的班別");
   const reason = $("#lvReason").value.trim();
   const type = $("#lvType button.on")?.dataset.v || "事假";
-  const subNeed = $("#lvSub button.on")?.dataset.v === "yes";
-  const subName = subNeed ? $("#lvSubName").value.trim() : "";
-  if (subNeed && !subName) return toast("請輸入代班人姓名");
+  const subNeed = lvSubOn();
+  const subs = {};
+  if (subNeed) $$("#lvShifts .lv-row.on").forEach(r => { const v = r.querySelector("select")?.value; if (v) subs[r.dataset.sid] = v; });
+  if (subNeed && !Object.keys(subs).length) return toast("請在勾選的班別下方選代班人");
+  if (subNeed) {
+    await loadLvSubDay(true);   // 送出前用最新班表再檢查一次
+    const bad = subProblems(subs, lv.days[lv.date] || {});
+    if (bad.length) return appAlert("代班時段衝突", bad.join("\n"));
+  }
+  const subNames = Object.fromEntries(Object.entries(subs).map(([sid, eid]) => [sid, empNameOf(eid)]));
+  const subName = [...new Set(Object.values(subNames))].join("、");
   const editing = lv.editId;
   if (!(await appConfirm(editing ? "更新請假" : "送出請假", `${dayLabel(lv.date)}・${type}\n${ids.map(id => shiftMap[id]?.name).join("\n")}\n代班：${subNeed ? subName : "不需代班"}`, { okText: editing ? "更新" : "送出" }))) return;
   $("#lvSubmit").disabled = true;
   try {
     const data = { date: lv.date, month: lv.date.slice(0, 7), shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""),
-      leaveType: type, reason, subNeed, subName };
+      leaveType: type, reason, subNeed, subName, subs, subNames };
     if (editing) await updateDoc(doc(db, "leaveRequests", editing), { ...data, status: "pending", empId: me.id, updatedAt: serverTimestamp() });
     else await addDoc(collection(db, "leaveRequests"), { empId: me.id, name: me.name, empNo: me.empNo || "", ...data, status: "pending", createdAt: serverTimestamp() });
     resetLvForm();
@@ -2333,11 +2432,17 @@ $("#lvSubmit").onclick = async () => {
 function setSeg(sel, v) { $$(sel + " button").forEach(x => x.classList.toggle("on", x.dataset.v === v)); }
 function resetLvForm() {
   lv.editId = null;
-  $("#lvReason").value = ""; $("#lvSubName").value = "";
-  setSeg("#lvSub", "no"); $("#lvSubName").classList.add("hidden");
+  $("#lvReason").value = "";
+  setSeg("#lvSub", "no"); $("#lvSubHint").classList.add("hidden"); $("#lvShifts").classList.remove("subon");
   $("#lvSubmit").textContent = "送出請假申請"; $("#lvCancelEdit").classList.add("hidden");
 }
-$("#lvSub").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; setSeg("#lvSub", b.dataset.v); $("#lvSubName").classList.toggle("hidden", b.dataset.v !== "yes"); if (b.dataset.v === "yes") $("#lvSubName").focus(); };
+$("#lvSub").onclick = e => {
+  const b = e.target.closest("button[data-v]"); if (!b) return;
+  setSeg("#lvSub", b.dataset.v);
+  const on = b.dataset.v === "yes";
+  $("#lvSubHint").classList.toggle("hidden", !on); $("#lvShifts").classList.toggle("subon", on);
+  if (on) { if (!$$("#lvShifts .lv-row.on").length) toast("先勾選要請假的班別，再選代班人"); loadLvSubDay(); }
+};
 $("#lvCancelEdit").onclick = () => { resetLvForm(); renderLvShifts(); };
 $("#lvList").onclick = async e => {
   if (e.target.closest("[data-lvedit]")) {
@@ -2345,7 +2450,7 @@ $("#lvList").onclick = async e => {
     if (!q) return;
     lv.editId = q.id;
     setSeg("#lvType", q.leaveType); $("#lvReason").value = q.reason || "";
-    setSeg("#lvSub", q.subNeed ? "yes" : "no"); $("#lvSubName").value = q.subName || ""; $("#lvSubName").classList.toggle("hidden", !q.subNeed);
+    setSeg("#lvSub", q.subNeed && Object.keys(q.subs || {}).length ? "yes" : "no"); $("#lvSubHint").classList.toggle("hidden", !lvSubOn());
     $("#lvSubmit").textContent = "更新請假申請"; $("#lvCancelEdit").classList.remove("hidden");
     const m = q.date.slice(0, 7);
     lv.date = q.date;
@@ -2425,6 +2530,13 @@ async function applyLeave(q, { ids, type, reason, subs }, mode) {
   if (mode === "save" && wasApplied && !ids.length) mode = "revoke";
   const applying = mode === "approve" || (mode === "save" && wasApplied);
   const month = q.date.slice(0, 7);
+  // 防呆：代班人那個時段不能已經有班
+  const useSubs = Object.fromEntries(ids.filter(sid => subs[sid]).map(sid => [sid, subs[sid]]));
+  if (Object.keys(useSubs).length) {
+    const day = await loadDayAll(q.date);
+    const bad = subProblems(useSubs, day, wasApplied ? (q.subAdded || {}) : {});
+    if (bad.length) throw Object.assign(new Error(bad.join("\n")), { clash: true });
+  }
   const batch = writeBatch(db);
   const leaveObj = {};
   if (wasApplied) (q.shiftIds || []).forEach(id => { if (!applying || !ids.includes(id)) leaveObj[id] = deleteField(); });
@@ -2462,6 +2574,13 @@ async function applyLeave(q, { ids, type, reason, subs }, mode) {
   await batch.commit();
 }
 
+// 管理者：讀某天所有人的班 {empId: {ids, leave}}
+async function loadDayAll(date) {
+  const snap = await getDocs(query(collection(db, "schedules"), where("date", "==", date)));
+  const day = {};
+  snap.forEach(d => { const x = d.data(); day[x.empId] = { ids: x.shiftIds || [], leave: x.leave || {} }; });
+  return day;
+}
 // 請假審核／修改視窗
 let lm = null;
 async function openLeaveModal(q) {
@@ -2469,28 +2588,32 @@ async function openLeaveModal(q) {
   $("#lmTitle").textContent = q.status === "approved" ? "修改請假" : "審核請假";
   $("#lmWho").textContent = `${q.name}　${dayLabel(q.date)}`;
   setSeg("#lmType", q.leaveType); $("#lmReason").value = q.reason || "";
-  $("#lmSubHint").textContent = q.subNeed ? `員工填寫的代班人：${q.subName || "（未填）"}` : "員工填寫：不需代班";
+  $("#lmSubHint").textContent = `員工申請時：${subText(q)}`;
   $("#lmShifts").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
   $("#lmActs").innerHTML = q.status === "approved"
     ? `<button class="btn danger" data-lm="revoke">撤銷這筆請假</button>`
     : `<button class="btn danger" data-lm="reject">退回</button><button class="btn primary" data-lm="approve">核准</button>`;
   $("#lvModal").classList.remove("hidden");
   requestAnimationFrame(() => $("#lvModal").classList.add("open"));
-  const [sch] = await Promise.all([getDoc(doc(db, "schedules", `${q.empId}_${q.date}`)), employees.length ? null : loadEmployees()]);
-  const have = sch.exists() ? (sch.data().shiftIds || []) : [];
+  const [day] = await Promise.all([loadDayAll(q.date), employees.length ? null : loadEmployees()]);
+  lm.day = day;
+  const have = day[q.empId]?.ids || [];
   const ids = [...new Set([...have, ...(q.shiftIds || [])])].filter(id => shiftMap[id] && shiftMap[id].cat !== "leave")
     .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
   lm.ids = ids;
   // 員工填的名字對得到員工 → 預設帶入
   const guess = q.subNeed && q.subName ? activeEmployees().filter(e => e.id !== q.empId && q.subName.includes(e.name)) : [];
   const opts = activeEmployees().filter(e => e.id !== q.empId);
+  const ign = q.status === "approved" ? (q.subAdded || {}) : {};
+  const busy = (sid, eid) => { const d = day[eid] || {}; return clashWith(sid, workIds(d.ids, d.leave).filter(x => !(ign[x] === eid && x === sid))); };
   $("#lmShifts").innerHTML = ids.map((id, i) => {
     const s = shiftMap[id], on = (q.shiftIds || []).includes(id);
-    const cur = q.subs?.[id] || (guess.length === 1 ? guess[0].id : "");
+    let cur = q.subs?.[id] || (guess.length === 1 ? guess[0].id : "");
+    if (cur && busy(id, cur)) cur = "";
     return `<div class="lm-row ${on ? "on" : ""}" data-sid="${id}">
       <label class="lm-chk"><input type="checkbox" ${on ? "checked" : ""}><span class="lv-no" style="background:${esc(s.color || "#8e8e93")}">${i + 1}</span>
         <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span></label>
-      <select class="lm-sub" ${on ? "" : "disabled"}><option value="">不需代班</option>${opts.map(e => `<option value="${e.id}" ${e.id === cur ? "selected" : ""}>代班：${esc(e.name)}</option>`).join("")}</select>
+      <select class="lm-sub" ${on ? "" : "disabled"}><option value="">不需代班</option>${opts.map(e => { const c = busy(id, e.id); return `<option value="${e.id}" ${e.id === cur ? "selected" : ""} ${c ? "disabled" : ""}>代班：${esc(e.name)}${c ? `（這時段有班：${esc(shiftMap[c]?.name || "")}）` : ""}</option>`; }).join("")}</select>
     </div>`;
   }).join("") || `<p class="empty" style="padding:14px">這天沒有排班</p>`;
 }
@@ -2527,7 +2650,7 @@ async function lmRun(mode, btn) {
     }
     closeLeaveModal();
     await loadApprovals();
-  } catch (err) { appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+  } catch (err) { err.clash ? appAlert("代班時段衝突", err.message) : appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
   finally { if (btn) btn.disabled = false; }
 }
 $("#lmSave").onclick = e => lmRun("save", e.currentTarget);
@@ -2548,10 +2671,13 @@ $("#apList").onclick = async e => {
     if (!Object.keys(subs).length && q.subNeed && q.subName) {   // 員工填的名字剛好對到一位員工 → 直接排給他
       if (!employees.length) await loadEmployees();
       const g = activeEmployees().filter(x => x.id !== q.empId && q.subName.includes(x.name));
-      if (g.length === 1) subs = Object.fromEntries((q.shiftIds || []).map(sid => [sid, g[0].id]));
+      if (g.length === 1) {
+        const day = await loadDayAll(q.date);
+        subs = Object.fromEntries((q.shiftIds || []).filter(sid => !subProblems({ [sid]: g[0].id }, day).length).map(sid => [sid, g[0].id]));
+      }
     }
     try { b.disabled = true; await applyLeave(q, { ids: q.shiftIds || [], type: q.leaveType, reason: q.reason || "", subs }, "approve"); toast(`已核准：${q.name}・${dayLabel(q.date)} ${q.leaveType}`); await loadApprovals(); }
-    catch (err) { b.disabled = false; appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
+    catch (err) { b.disabled = false; err.clash ? appAlert("代班時段衝突", err.message + "\n請按「修改／代班」換一位代班人。") : appAlert("操作失敗", errMsg(err) + "\n請確認 firestore.rules 已更新。"); }
     return;
   }
   const title = `${q.name}・${dayLabel(q.date)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`;
@@ -2585,6 +2711,7 @@ let apPrompted = false;
 async function checkPendingOnStart() {
   if (me?.role !== "admin" || apPrompted) return;
   apPrompted = true;
+  syncStaff().catch(() => {});
   const n = await fetchPending().catch(() => 0);
   if (!n) return;
   const parts = [ap.leave.length ? `請假 ${ap.leave.length} 筆` : "", ap.punch.length ? `補打卡 ${ap.punch.length} 筆` : ""].filter(Boolean).join("、");

@@ -26,10 +26,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 班表：員工只能看自己的
+    // 班表：員工只能查詢自己的；單一天可讀（選代班人時檢查對方那天有沒有班）
     match /schedules/{id} {
-      allow read: if isAdmin()
-                  || (bound() && (resource == null || resource.data.empId == myEmpId()));
+      allow get: if bound();
+      allow list: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow write: if isAdmin();
+    }
+
+    // 員工姓名名單（選代班人用，只有 id、姓名、員編）
+    match /meta/{id} {
+      allow read: if bound();
       allow write: if isAdmin();
     }
 

@@ -756,3 +756,10 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 .ap-acts .btn{min-width:0}
 .ap-acts{grid-template-columns:repeat(auto-fit,minmax(0,1fr))}
 .ap-acts .btn.primary{grid-column:span 1}
+.lv-row{display:flex;flex-direction:column}
+.lv-subsel{display:none;width:100%;margin-top:6px;background:#fff;border:1px solid var(--sep-2,#e5e5ea)}
+.lv-shifts.subon .lv-row.on .lv-subsel{display:block}
+.lv-subhint{margin:8px 0 0}
+.check-item.clash{opacity:.55;cursor:not-allowed}
+.ci-sub.clash-why{color:var(--red)}
+.lm-sub option:disabled{color:#aaa}
