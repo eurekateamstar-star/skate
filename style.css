@@ -799,3 +799,11 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 @media (max-width:768px){ .mp-row{grid-template-columns:64px 1fr auto;padding:10px 12px} .mp-row .mp-t{grid-column:2;grid-row:2;font-size:12px} .mp-row .tag{grid-column:3;grid-row:1/3} .mp-total{font-size:34px} }
 .mp-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
 .mp-stats span{min-width:0;padding:8px 2px;font-size:11.5px;white-space:nowrap}
+.mp-row{cursor:pointer;transition:background .15s}
+.mp-row:hover{background:var(--fill)}
+.mp-row.issue{background:#fff5f5}
+.mp-issue{grid-column:1/-1;font-size:13px;color:#b42318;margin-top:-2px}
+.mp-okbtn{width:100%;height:46px;font-size:15.5px;margin-top:12px}
+.mp-tip{margin:10px 0 0;text-align:center}
+.inst-issue{color:#b42318;font-size:12.5px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pay-issue div{margin-top:4px}

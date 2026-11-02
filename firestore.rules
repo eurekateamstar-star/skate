@@ -97,7 +97,7 @@ service cloud.firestore {
       allow create, update: if isAdmin()
                     || (bound() && request.resource.data.empId == myEmpId()
                         && id == request.resource.data.month + '_' + myEmpId()
-                        && request.resource.data.status in ['ok', 'issue']);
+                        && request.resource.data.status in ['ok', 'issue', 'none']);
       allow delete: if isAdmin();
     }
 

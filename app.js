@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=45";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=46";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -3010,13 +3010,14 @@ function renderPayroll() {
           <label>扣款<input type="number" data-adj="deduct" value="${c.adj.deduct || ""}" placeholder="0"></label>
           <label class="grow">備註<input data-adj="note" value="${esc(c.adj.note || "")}" placeholder="例：交通補貼、獎金"></label>
         </div>
-        ${pay.conf[c.u.id]?.status === "issue" ? `<div class="pay-issue">員工回報有問題：${esc(pay.conf[c.u.id].note || "（未填說明）")}</div>` : ""}
+        ${pay.conf[c.u.id]?.status === "issue" ? `<div class="pay-issue"><b>員工回報有問題</b>${Object.values(pay.conf[c.u.id].issues || {}).sort((a, b) => a.date.localeCompare(b.date)).map(i => `<div>・${dayLabel(i.date)} ${esc(i.name)}：${esc(i.note)}</div>`).join("")}${pay.conf[c.u.id].note ? `<div>・${esc(pay.conf[c.u.id].note)}</div>` : ""}</div>` : ""}
         ${pay.slips[c.u.id] ? `<div class="pay-pubrow">已發布 ${money(pay.slips[c.u.id].total)}・${fmtTs(pay.slips[c.u.id].publishedAt)}<button class="btn small danger" data-unpub>取消發布</button></div>` : ""}
         <div class="inst-head">每堂明細 <span>（可手動改狀態，例如補請假）</span></div>
         <div class="inst-list">${inst.map(it => `<div class="inst">
           <span class="inst-date">${dayLabel(it.date)}</span>
           <span class="dot" style="background:${esc(it.s?.color || "#9aa0a6")}"></span><span class="inst-name">${esc(it.name)}</span>
           <span class="inst-punch">${it.hasIn ? "上✓" : "上✗"} ${it.hasOut ? "下✓" : "下✗"}</span>
+          ${(() => { const is = pay.conf[c.u.id]?.issues?.[`${it.date}_${it.sid || it.name}`]; return is ? `<span class="inst-issue" title="${esc(is.note)}">❗ ${esc(is.note)}</span>` : ""; })()}
           <select data-ov="${esc(it.key)}" class="st-${it.st}">${Object.entries(ST).map(([k, v]) => `<option value="${k}" ${it.st === k ? "selected" : ""}>${v}${it.auto === k ? "（系統）" : ""}</option>`).join("")}</select>
         </div>`).join("") || `<p class="empty">沒有符合的紀錄</p>`}</div>
       </div>`;
@@ -3081,7 +3082,7 @@ $("#payList").onchange = e => {
 const fmtTs = t => { const d = t?.toDate ? t.toDate() : t ? new Date(t) : null; return d ? `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}` : ""; };
 function payStateTags(c) {
   const cf = pay.conf?.[c.u.id], sl = pay.slips?.[c.u.id];
-  const conf = cf?.status === "ok" ? `<span class="tag ok">員工已確認</span>` : cf?.status === "issue" ? `<span class="tag bad">員工有疑問</span>` : `<span class="tag muted">員工未確認</span>`;
+  const conf = cf?.status === "ok" ? `<span class="tag ok">員工已確認</span>` : cf?.status === "issue" ? `<span class="tag bad">員工回報 ${Object.keys(cf.issues || {}).length || 1} 堂有問題</span>` : `<span class="tag muted">員工未確認</span>`;
   const pub = !sl ? "" : Math.round(sl.total) === Math.round(c.total) ? `<span class="tag ok">已發布</span>` : `<span class="tag warn">已改動，需重新發布</span>`;
   return conf + pub;
 }
@@ -3177,34 +3178,50 @@ function renderMyPay() {
   $("#mpConfirm").innerHTML = `
     <div class="mp-stats"><span><b>${mp.items.filter(i => i.st !== "future").length}</b>堂</span><span><b>${n("ok")}</b>正常</span>
       <span class="${n("forgot") ? "o" : ""}"><b>${n("forgot")}</b>忘記打卡</span><span class="${n("missing") ? "r" : ""}"><b>${n("missing")}</b>未打卡</span><span><b>${n("leave")}</b>請假</span></div>
-    ${cf?.status === "ok" ? `<div class="mp-cf ok">✅ 你已在 ${fmtTs(cf.at)} 確認打卡明細無誤<button class="btn link" data-mp="issue">改成有問題</button></div>`
-      : cf?.status === "issue" ? `<div class="mp-cf bad">❗ 已回報有問題：${esc(cf.note || "")}<button class="btn link" data-mp="ok">改成確認無誤</button><button class="btn link" data-mp="issue">修改說明</button></div>`
-      : `<div class="mp-acts"><button class="btn" data-mp="issue">有問題</button><button class="btn primary" data-mp="ok">確認無誤</button></div>`}`;
+    ${cf?.status === "ok" ? `<div class="mp-cf ok">✅ 你已在 ${fmtTs(cf.at)} 確認打卡明細無誤</div>`
+      : cf?.status === "issue" ? `<div class="mp-cf bad">❗ 已回報 ${Object.keys(cf.issues || {}).length || 1} 堂有問題，等管理者確認${cf.note ? `<br>${esc(cf.note)}` : ""}</div><button class="btn mp-okbtn" data-mp="ok">問題已解決，確認無誤</button>`
+      : `<button class="btn primary mp-okbtn" data-mp="ok">確認無誤</button>`}
+    <p class="hint mp-tip">有問題？直接點下方<b>有問題的那一堂</b>回報</p>`;
   $("#mpListTitle").textContent = `打卡明細（${mp.items.length} 堂）`;
+  const iss = mp.conf?.issues || {};
   $("#mpList").innerHTML = mp.items.map(it => {
     const [cls, txt] = MP_ST[it.st] || ["", it.st];
-    return `<div class="mp-row ${it.st === "future" ? "fut" : ""}">
+    const is = iss[it.key];
+    return `<div class="mp-row ${it.st === "future" ? "fut" : ""} ${is ? "issue" : ""}" data-key="${esc(it.key)}">
       <span class="mp-date">${dayLabel(it.date)}</span>
       <span class="mp-name"><i class="dot" style="background:${esc(it.s?.color || "#9aa0a6")}"></i>${esc(it.name)}</span>
       <span class="mp-t">${it.st === "leave" ? "—" : `${it.inT || "--:--"} → ${it.outT || "--:--"}`}</span>
-      <span class="tag ${cls}">${txt}</span></div>`;
+      <span class="tag ${is ? "bad" : cls}">${is ? "已回報" : txt}</span>
+      ${is ? `<div class="mp-issue">❗ ${esc(is.note)}</div>` : ""}</div>`;
   }).join("") || `<p class="empty" style="padding:16px">這個月沒有排班或打卡紀錄</p>`;
 }
 $("#mpMonth").onchange = () => loadMyPay();
-$("#mpConfirm").onclick = async e => {
-  const b = e.target.closest("[data-mp]"); if (!b) return;
-  let note = "";
-  if (b.dataset.mp === "issue") {
-    note = await appDialog({ title: "回報有問題", message: "說明哪一天、哪個班有問題，管理者會幫你確認", input: { type: "text", placeholder: "例：11/5 下午班有上但沒打到卡", value: mp.conf?.note || "" },
-      buttons: [{ text: "取消", value: false }, { text: "送出", value: true, style: "primary" }] });
-    if (note === false) return;
-    if (!note.trim()) return toast("請填寫說明");
-  }
+async function saveMpConf(status, issues) {
+  await setDoc(doc(db, "payConfirm", `${mp.month}_${me.id}`), { empId: me.id, name: me.name, month: mp.month, status, issues, note: "", at: serverTimestamp() });
+}
+$("#mpList").onclick = async e => {
+  const row = e.target.closest(".mp-row"); if (!row) return;
+  const it = mp.items.find(x => x.key === row.dataset.key); if (!it) return;
+  const issues = { ...(mp.conf?.issues || {}) };
+  const cur = issues[it.key];
+  const res = await appDialog({ title: "這堂有問題", message: `${dayLabel(it.date)}　${it.name}\n打卡：${it.inT || "--:--"} → ${it.outT || "--:--"}（${MP_ST[it.st]?.[1] || ""}）`,
+    input: { type: "text", placeholder: "例：有上班但忘了打下班卡、實際 16:00–17:30", value: cur?.note || "" },
+    buttons: [{ text: "取消", value: false }, ...(cur ? [{ text: "取消回報", value: "del", style: "danger" }] : []), { text: cur ? "更新" : "回報", value: true, style: "primary" }] });
+  if (res === false) return;
+  if (res === "del") delete issues[it.key];
+  else { if (!String(res).trim()) return toast("請寫一下哪裡有問題"); issues[it.key] = { date: it.date, name: it.name, sid: it.sid || "", note: String(res).trim() }; }
   try {
-    await setDoc(doc(db, "payConfirm", `${mp.month}_${me.id}`), { empId: me.id, name: me.name, month: mp.month, status: b.dataset.mp, note: note.trim(), at: serverTimestamp() });
-    toast(b.dataset.mp === "ok" ? "已確認無誤" : "已回報，管理者會幫你確認");
+    await saveMpConf(Object.keys(issues).length ? "issue" : "none", issues);
+    toast(res === "del" ? "已取消回報" : "已回報，管理者會幫你確認");
     loadMyPay();
   } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
+};
+$("#mpConfirm").onclick = async e => {
+  const b = e.target.closest("[data-mp]"); if (!b) return;
+  const n = Object.keys(mp.conf?.issues || {}).length;
+  if (n && !(await appConfirm("確認無誤", `你有 ${n} 堂回報過問題，確認無誤會把這些回報清掉。`, { okText: "確認無誤" }))) return;
+  try { await saveMpConf("ok", {}); toast("已確認無誤"); loadMyPay(); }
+  catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
 };
 
 $("#payCsv").onclick = () => {
