@@ -349,8 +349,13 @@ async function setupRichMenu(env) {
 
   // 已綁定 LINE 的管理者改用管理者選單
   const fs = new Firestore(env);
-  const admins = (await fs.listEmployees()).filter(e => e.role === "admin" && e.active !== false && String(e.lineUid || "").startsWith("line:"))
-    .map(e => e.lineUid.slice(5));
+  let admins = [];
+  try {
+    admins = (await fs.listEmployees()).filter(e => e.role === "admin" && e.active !== false && String(e.lineUid || "").startsWith("line:"))
+      .map(e => e.lineUid.slice(5));
+  } catch (e) {
+    return { ok: true, message: "圖文選單已更新，但讀不到員工資料，管理者選單還沒套用（稍後再開一次這個網址，或管理者重新登入一次系統即可）", richMenus: ids, adminError: String(e.message) };
+  }
   if (admins.length) await lineApi(env, "/v2/bot/richmenu/bulk/link", { method: "POST", body: JSON.stringify({ richMenuId: ids.adminStaff, userIds: admins }) }).catch(e => { ids.linkError = String(e.message); });
   return { ok: true, message: "圖文選單設定完成！請到 LINE 官方帳號聊天室查看（可能需要關掉聊天室重開）", richMenus: ids, adminsLinked: admins.length };
 }
