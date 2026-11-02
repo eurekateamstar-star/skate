@@ -864,3 +864,35 @@ body.loading .load-bar{opacity:1}
 .punch-card.pending .btn.big{background:#e5e5ea;color:#8e8e93;box-shadow:none}
 .pc-note{margin:10px 2px 0;font-size:12.5px;color:var(--muted);text-align:center}
 .punch-card.pending .pc-btns{margin-top:14px}
+/* 班別設定 */
+.sh-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.sh-all{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text-2);cursor:pointer}
+.sh-add{margin-left:auto}
+.sh-list{padding:4px 0}
+.sh-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--sep-2,#f0f0f2);cursor:pointer}
+.sh-row:last-child{border-bottom:0}
+.sh-row:hover{background:var(--fill)}
+.sh-bar-c{width:6px;align-self:stretch;border-radius:3px;flex-shrink:0}
+.sh-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.sh-main b{font-size:15.5px;font-weight:600}
+.sh-main small{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--text-2)}
+.sh-time{font-variant-numeric:tabular-nums;font-weight:600;color:var(--text)}
+.sh-h{color:var(--muted)}
+.sh-code{background:var(--fill);border-radius:6px;padding:1px 6px;font-size:11.5px;color:var(--muted)}
+.sh-loc{font-size:12.5px;color:var(--primary)}
+.sh-loc.none{color:var(--muted)}
+.lc-pin{font-size:22px}
+.sm-times{display:flex;align-items:center;gap:8px}
+.sm-times input{flex:1}
+.sm-colors{display:flex;flex-wrap:wrap;gap:10px}
+.sm-colors button{width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;box-shadow:inset 0 0 0 2px rgba(255,255,255,.6)}
+.sm-colors button.on{box-shadow:0 0 0 3px #fff,0 0 0 5px var(--text)}
+.sm-more{width:34px;height:34px;border-radius:50%;background:var(--fill);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--muted);cursor:pointer;position:relative;overflow:hidden}
+.sm-more input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.sm-radius{display:flex;align-items:center;gap:12px}
+.sm-radius input{flex:1;height:auto;padding:0;background:none}
+.lc-used{display:flex;flex-wrap:wrap;gap:6px}
+.lc-used .chip{border-left:4px solid var(--c);background:var(--fill);padding:4px 8px;border-radius:6px;font-size:13px}
+#smLoc,#smOLoc{width:100%}
+@media (max-width:768px){ .sh-row{padding:12px} .emp-tools .seg button{font-size:13px} }
+.lc-used .chip{color:var(--text);cursor:default}

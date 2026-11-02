@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=55";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=56";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -1461,81 +1461,97 @@ $("#importBtn").onclick = async () => {
 };
 
 /* ================= 班別設定（管理者） ================= */
+let shF = "", shTab = "shift";
+const SH_COLORS = ["#3a3f44", "#7b4fb0", "#2f6fb5", "#0a84ff", "#3d9a3a", "#30d158", "#d9822b", "#ff9f0a", "#b03a5b", "#ff375f", "#64d2ff", "#ac8e68", "#8e8e93"];
 async function renderShiftList() {
   await Promise.all([loadShiftTypes(), loadLocations()]);
+  $$("#shTab button").forEach(b => b.classList.toggle("on", b.dataset.v === shTab));
+  $("#shPaneShift").classList.toggle("hidden", shTab !== "shift");
+  $("#shPaneLoc").classList.toggle("hidden", shTab !== "loc");
   renderLocList();
-  initLocMap();
-  const locOpts = sel => `<option value="">不限地點</option>` + locations.map(l => `<option value="${l.id}" ${sel === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
-  $("#shiftList").innerHTML = shiftTypes.length ? shiftTypes.map(s => `
-    <tr data-id="${s.id}">
-      <td><input type="checkbox" class="s-chk"></td>
-      <td><input class="s-code" value="${esc(s.code || "")}" size="5"></td>
-      <td><select class="s-cat">
-        <option value="shift" ${s.cat !== "leave" ? "selected" : ""}>班別</option>
-        <option value="leave" ${s.cat === "leave" ? "selected" : ""}>休假</option>
-      </select></td>
-      <td><input class="s-name" value="${esc(s.name)}" size="22"></td>
-      <td><input class="s-start" type="time" value="${esc(s.start || "")}"></td>
-      <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
-      <td>${shiftHours(s) || "—"}${s.breakStart && s.breakEnd ? `<div class="emp-no">休息 ${esc(s.breakStart)}~${esc(s.breakEnd)}</div>` : ""}</td>
-      <td><div class="loc-pair"><label><span>上班</span><select class="s-loc">${locOpts(s.locationId || "")}</select></label>
-        <label><span>下班</span><select class="s-oloc">${locOpts(s.outLocationId || "").replace("不限地點", "同上班地點")}</select></label></div></td>
-      <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
-      <td>
-        <button class="btn small primary s-save">儲存</button>
-        <button class="btn small danger s-del">刪除</button>
-      </td>
-    </tr>`).join("") : `<tr><td colspan="10" class="empty">尚未建立班別</td></tr>`;
-  $("#shAll").checked = false;
-  $("#shCount").textContent = `共 ${shiftTypes.length} 個班別`;
+  if (shTab === "loc") initLocMap();
+  drawShiftRows();
 }
-$("#shiftForm").onsubmit = async e => {
-  e.preventDefault();
-  const data = {
-    cat: $("#shCat").value,
-    name: $("#shName").value.trim(),
-    start: $("#shStart").value,
-    end: $("#shEnd").value,
-    color: $("#shColor").value,
-    order: Date.now()
-  };
-  if (!data.name) return;
-  try {
-    await addDoc(collection(db, "shiftTypes"), data);
-    e.target.reset(); $("#shColor").value = "#2e9e3f";
-    toast("已新增班別");
-    renderShiftList();
-  } catch (err) { toast("新增失敗：" + errMsg(err)); }
+function drawShiftRows() {
+  const q = $("#shSearch").value.trim().toLowerCase();
+  const list = shiftTypes.filter(s => (!q || `${s.name} ${s.code || ""}`.toLowerCase().includes(q))
+    && (!shF || (shF === "shift" && s.cat !== "leave") || (shF === "leave" && s.cat === "leave") || (shF === "noloc" && s.cat !== "leave" && !s.locationId)));
+  const nShift = shiftTypes.filter(s => s.cat !== "leave").length;
+  $("#shSub").textContent = `${nShift} 個上班班別・${shiftTypes.length - nShift} 個休假・${locations.length} 個打卡地點`;
+  $("#shCount").textContent = list.length !== shiftTypes.length ? `顯示 ${list.length} / ${shiftTypes.length}` : `共 ${shiftTypes.length} 個`;
+  const ln = id => locMap[id]?.name || "";
+  $("#shiftList").innerHTML = list.map(s => {
+    const leave = s.cat === "leave";
+    const loc = leave ? "" : !s.locationId ? `<span class="sh-loc none">不限地點</span>`
+      : s.outLocationId && s.outLocationId !== s.locationId ? `<span class="sh-loc">📍 上班 ${esc(ln(s.locationId))} → 下班 ${esc(ln(s.outLocationId))}</span>`
+      : `<span class="sh-loc">📍 ${esc(ln(s.locationId))}</span>`;
+    const h = shiftHours(s);
+    return `<div class="sh-row" data-id="${s.id}">
+      <input type="checkbox" class="s-chk">
+      <span class="sh-bar-c" style="background:${esc(s.color || "#8e8e93")}"></span>
+      <span class="sh-main"><b>${esc(s.name)}</b>
+        <small>${leave ? `<span class="tag muted">休假</span>` : s.start && s.end ? `<span class="sh-time">${esc(s.start)} – ${esc(s.end)}</span>${h ? `<span class="sh-h">${h}</span>` : ""}` : `<span class="sh-loc none">沒設時間</span>`}${s.code ? `<span class="sh-code">${esc(s.code)}</span>` : ""}</small>
+        ${loc}</span>
+      <span class="chev-r">›</span></div>`;
+  }).join("") || `<p class="empty" style="padding:20px">${shiftTypes.length ? "沒有符合的班別" : "尚未建立班別，按「＋ 新增班別」或用下方批次新增"}</p>`;
+  $("#shAll").checked = false; updShSel();
+}
+function updShSel() { const n = $$(".s-chk:checked").length; $("#shDelSel").classList.toggle("hidden", !n); $("#shDelSel").textContent = `刪除勾選（${n}）`; }
+$("#shTab").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; shTab = b.dataset.v; renderShiftList(); };
+$("#shSearch").oninput = drawShiftRows;
+$("#shFilter").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; shF = b.dataset.v; setSeg("#shFilter", shF); drawShiftRows(); };
+$("#shiftList").onclick = e => {
+  if (e.target.classList.contains("s-chk")) return updShSel();
+  const r = e.target.closest(".sh-row"); if (r) openShift(shiftMap[r.dataset.id]);
 };
-$("#shiftList").onclick = async e => {
-  const tr = e.target.closest("tr[data-id]");
-  if (!tr) return;
-  const id = tr.dataset.id;
+$("#shAddBtn").onclick = () => openShift(null);
+
+// 班別編輯視窗
+let sm = null;
+function openShift(sh) {
+  sm = { s: sh };
+  $("#smTitle").textContent = sh ? "編輯班別" : "新增班別";
+  $("#smName").value = sh?.name || ""; $("#smCode").value = sh?.code || "";
+  $("#smStart").value = sh?.start || ""; $("#smEnd").value = sh?.end || "";
+  setSeg("#smCat", sh?.cat === "leave" ? "leave" : "shift");
+  sm.color = sh?.color || "#2f6fb5";
+  const cols = SH_COLORS.includes(sm.color) ? SH_COLORS : [sm.color, ...SH_COLORS];
+  $("#smColors").innerHTML = cols.map(c => `<button type="button" data-c="${c}" style="background:${c}" class="${c === sm.color ? "on" : ""}"></button>`).join("") + `<label class="sm-more" title="其他顏色"><input type="color" id="smColorPick" value="${esc(sm.color)}">＋</label>`;
+  const opts = (sel, none) => `<option value="">${none}</option>` + locations.map(l => `<option value="${l.id}" ${sel === l.id ? "selected" : ""}>${esc(l.name)}（${l.radius || 50} 公尺）</option>`).join("");
+  $("#smLoc").innerHTML = opts(sh?.locationId || "", "不限地點");
+  $("#smOLoc").innerHTML = opts(sh?.outLocationId || "", "同上班地點");
+  smCatUI();
+  $("#smDel").classList.toggle("hidden", !sh);
+  $("#shModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#shModal").classList.add("open"));
+}
+function smCatUI() { const leave = $("#smCat button.on")?.dataset.v === "leave"; $(".sm-time").classList.toggle("hidden", leave); $(".sm-loc").classList.toggle("hidden", leave); }
+function closeShiftM() { $("#shModal").classList.remove("open"); setTimeout(() => $("#shModal").classList.add("hidden"), 200); }
+$("#smCat").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { setSeg("#smCat", b.dataset.v); smCatUI(); } };
+$("#smColors").onclick = e => { const b = e.target.closest("button[data-c]"); if (!b) return; sm.color = b.dataset.c; $$("#smColors button").forEach(x => x.classList.toggle("on", x === b)); };
+$("#smColors").oninput = e => { if (e.target.id === "smColorPick") { sm.color = e.target.value; $$("#smColors button").forEach(x => x.classList.remove("on")); } };
+$("#shModal").onclick = async e => {
+  if (e.target.id === "shModal" || e.target.closest("[data-close]")) return closeShiftM();
+  if (e.target.id === "smDel") {
+    if (!(await appConfirm("刪除班別", `確定刪除「${sm.s.name}」？已排入班表的不會自動移除。`, { okText: "刪除", danger: true }))) return;
+    try { await deleteDoc(doc(db, "shiftTypes", sm.s.id)); toast("已刪除"); closeShiftM(); renderShiftList(); }
+    catch (err) { toast("刪除失敗：" + errMsg(err)); }
+  }
+};
+$("#smSave").onclick = async () => {
+  const leave = $("#smCat button.on")?.dataset.v === "leave";
+  const data = {
+    name: $("#smName").value.trim(), code: $("#smCode").value.trim(), cat: leave ? "leave" : "shift",
+    start: leave ? "" : $("#smStart").value, end: leave ? "" : $("#smEnd").value, color: sm.color,
+    locationId: leave ? "" : $("#smLoc").value, outLocationId: leave ? "" : $("#smOLoc").value
+  };
+  if (!data.name) return toast("請輸入班別名稱");
+  if ((data.start && !data.end) || (!data.start && data.end)) return toast("上班和下班時間要一起填，或都留空");
   try {
-    if (e.target.classList.contains("s-save")) {
-      const data = {
-        code: $(".s-code", tr).value.trim(),
-        cat: $(".s-cat", tr).value,
-        name: $(".s-name", tr).value.trim(),
-        start: $(".s-start", tr).value,
-        end: $(".s-end", tr).value,
-        locationId: $(".s-loc", tr).value || "",
-        outLocationId: $(".s-oloc", tr).value || "",
-        color: $(".s-color", tr).value
-      };
-      if (!data.name) return toast("名稱不可空白");
-      if ((data.start && !data.end) || (!data.start && data.end)) return toast("上班與下班時間要一起填，或都留空");
-      await updateDoc(doc(db, "shiftTypes", id), data);
-      shiftMap[id] = { ...shiftMap[id], ...data };
-      toast(`已儲存「${data.name}」`);
-      renderShiftList();
-    } else if (e.target.classList.contains("s-del")) {
-      if (!(await appConfirm("刪除班別", `確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`, { okText: "刪除", danger: true }))) return;
-      await deleteDoc(doc(db, "shiftTypes", id));
-      toast("已刪除");
-      renderShiftList();
-    }
-  } catch (err) { toast("操作失敗：" + errMsg(err)); }
+    if (sm.s) { await updateDoc(doc(db, "shiftTypes", sm.s.id), data); toast(`已儲存「${data.name}」`); }
+    else { await addDoc(collection(db, "shiftTypes"), { ...data, order: Date.now() }); toast("已新增班別"); }
+    closeShiftM(); renderShiftList();
+  } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 };
 
 // ---- 打卡地點（管理者）----
@@ -1547,15 +1563,49 @@ const boxOf = (lat, radius) => {
 };
 
 function renderLocList() {
-  const used = id => shiftTypes.filter(s => s.locationId === id || s.outLocationId === id).length;
-  $("#locList").innerHTML = locations.map(l => `
-    <tr data-id="${l.id}">
-      <td><input class="l-name" value="${esc(l.name)}" size="14"></td>
-      <td><a href="https://www.google.com/maps?q=${l.lat},${l.lng}" target="_blank" rel="noopener">${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}</a><div class="emp-no">${used(l.id)} 個班別使用</div></td>
-      <td><input class="l-radius" type="number" min="10" max="1000" value="${l.radius || 50}" style="width:80px"></td>
-      <td><button class="btn small primary l-save">儲存</button> <button class="btn small danger l-del">刪除</button></td>
-    </tr>`).join("") || `<tr><td colspan="4" class="empty">尚未建立打卡地點</td></tr>`;
+  const used = id => shiftTypes.filter(x => x.locationId === id || x.outLocationId === id);
+  $("#locList").innerHTML = locations.map(l => {
+    const u = used(l.id);
+    return `<div class="sh-row lc-row" data-id="${l.id}">
+      <span class="lc-pin">📍</span>
+      <span class="sh-main"><b>${esc(l.name)}</b><small><span class="sh-time">範圍 ${l.radius || 50} 公尺</span><span class="${u.length ? "" : "sh-loc none"}">${u.length ? `${u.length} 個班別使用` : "還沒有班別使用"}</span></small></span>
+      <span class="chev-r">›</span></div>`;
+  }).join("") || `<p class="empty" style="padding:20px">尚未建立打卡地點</p>`;
 }
+let lc = null;
+$("#locList").onclick = e => {
+  const r = e.target.closest(".lc-row"); if (!r) return;
+  const l = locMap[r.dataset.id]; lc = l;
+  $("#lcName").value = l.name; $("#lcRadius").value = l.radius || 50; $("#lcRadiusV").textContent = `${l.radius || 50} 公尺`;
+  $("#lcMapLink").href = `https://www.google.com/maps?q=${l.lat},${l.lng}`; $("#lcMapLink").textContent = `${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}（在 Google 地圖打開）`;
+  const u = shiftTypes.filter(x => x.locationId === l.id || x.outLocationId === l.id);
+  $("#lcUsed").innerHTML = u.map(x => `<span class="chip" style="--c:${esc(x.color || "#8e8e93")}">${esc(x.name)}</span>`).join("") || `<span class="hint" style="margin:0">還沒有班別使用，到「班別」分頁點班別指定</span>`;
+  $("#lcModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#lcModal").classList.add("open"));
+};
+$("#lcRadius").oninput = () => $("#lcRadiusV").textContent = `${$("#lcRadius").value} 公尺`;
+function closeLc() { $("#lcModal").classList.remove("open"); setTimeout(() => $("#lcModal").classList.add("hidden"), 200); }
+$("#lcModal").onclick = async e => {
+  if (e.target.id === "lcModal" || e.target.closest("[data-close]")) return closeLc();
+  if (e.target.id !== "lcDel") return;
+  const l = lc;
+  const users = shiftTypes.filter(x => x.locationId === l.id || x.outLocationId === l.id);
+  if (!(await appConfirm("刪除打卡地點", `刪除「${l.name}」？${users.length ? `目前有 ${users.length} 個班別使用，刪除後這些班別將不限地點。` : ""}`, { okText: "刪除", danger: true }))) return;
+  try {
+    const b = writeBatch(db);
+    users.forEach(x => b.update(doc(db, "shiftTypes", x.id), { ...(x.locationId === l.id ? { locationId: "" } : {}), ...(x.outLocationId === l.id ? { outLocationId: "" } : {}) }));
+    b.delete(doc(db, "locations", l.id));
+    await b.commit();
+    toast("已刪除"); closeLc(); renderShiftList();
+  } catch (err) { toast("刪除失敗：" + errMsg(err)); }
+};
+$("#lcSave").onclick = async () => {
+  const l = lc, radius = Math.max(10, Math.min(1000, +$("#lcRadius").value || 50));
+  try {
+    await updateDoc(doc(db, "locations", l.id), { name: $("#lcName").value.trim() || l.name, radius, ...boxOf(l.lat, radius) });
+    toast("已儲存"); closeLc(); renderShiftList();
+  } catch (err) { toast("儲存失敗：" + errMsg(err)); }
+};
 
 async function initLocMap() {
   let L;
@@ -1632,39 +1682,14 @@ $("#locForm").onsubmit = async e => {
   if (!name) return;
   try {
     await addDoc(collection(db, "locations"), { name, lat: c.lat, lng: c.lng, radius, ...boxOf(c.lat, radius), createdAt: serverTimestamp() });
-    toast(`已新增「${name}」，記得在下方班別指定打卡地點`);
+    toast(`已新增「${name}」，記得到「班別」分頁指定打卡地點`);
     e.target.reset(); $("#locRadius").value = 50;
     if (lPick) { lLayer.removeLayer(lPick); lPick = null; }
     renderShiftList();
   } catch (err) { toast("新增失敗：" + errMsg(err) + "（請確認 firestore.rules 已更新）"); }
 };
-$("#locList").onclick = async e => {
-  const tr = e.target.closest("tr[data-id]");
-  if (!tr) return;
-  const l = locMap[tr.dataset.id];
-  try {
-    if (e.target.classList.contains("l-save")) {
-      const radius = Math.max(10, Math.min(1000, +$(".l-radius", tr).value || 50));
-      await updateDoc(doc(db, "locations", l.id), { name: $(".l-name", tr).value.trim() || l.name, radius, ...boxOf(l.lat, radius) });
-      toast("已儲存");
-      renderShiftList();
-    } else if (e.target.classList.contains("l-del")) {
-      const n = shiftTypes.filter(s => s.locationId === l.id || s.outLocationId === l.id).length;
-      if (!(await appConfirm("刪除打卡地點", `刪除「${l.name}」？${n ? `目前有 ${n} 個班別使用，刪除後這些班別將不限地點。` : ""}`, { okText: "刪除", danger: true }))) return;
-      const b = writeBatch(db);
-      shiftTypes.filter(s => s.locationId === l.id || s.outLocationId === l.id).forEach(s => b.update(doc(db, "shiftTypes", s.id), {
-        ...(s.locationId === l.id ? { locationId: "" } : {}), ...(s.outLocationId === l.id ? { outLocationId: "" } : {})
-      }));
-      b.delete(doc(db, "locations", l.id));
-      await b.commit();
-      toast("已刪除");
-      renderShiftList();
-    }
-  } catch (err) { toast("操作失敗：" + errMsg(err)); }
-};
-
 // ---- 勾選刪除 / 全部刪除 ----
-$("#shAll").onchange = e => $$(".s-chk").forEach(c => c.checked = e.target.checked);
+$("#shAll").onchange = e => { $$(".s-chk").forEach(c => c.checked = e.target.checked); updShSel(); };
 
 async function deleteShifts(ids) {
   let batch = writeBatch(db), n = 0;
@@ -1677,7 +1702,7 @@ async function deleteShifts(ids) {
   renderShiftList();
 }
 $("#shDelSel").onclick = async () => {
-  const ids = $$(".s-chk:checked").map(c => c.closest("tr").dataset.id);
+  const ids = $$(".s-chk:checked").map(c => c.closest(".sh-row").dataset.id);
   if (!ids.length) return toast("請先勾選要刪除的班別");
   if (!(await appConfirm("刪除班別", `確定刪除勾選的 ${ids.length} 個班別？`, { okText: "刪除", danger: true }))) return;
   try { await deleteShifts(ids); } catch (err) { toast("刪除失敗：" + errMsg(err)); }

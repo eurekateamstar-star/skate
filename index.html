@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=55">
+  <link rel="stylesheet" href="style.css?v=56">
 </head>
 <body>
 
@@ -419,65 +419,56 @@
 
       <!-- 班別設定 -->
       <section id="view-shifts" class="view hidden">
-        <div class="view-head"><h2>班別設定</h2></div>
-        <div class="card">
-          <h3>打卡地點</h3>
-          <div class="loc-search">
-            <input id="locSearch" placeholder="搜尋地址或地點名稱（例：迎風河濱公園）、或貼上座標">
-            <button type="button" class="btn primary" id="locSearchBtn">搜尋</button>
-          </div>
-          <div id="locResults"></div>
-          <div id="locMap" class="loc-map"></div>
-          <form id="locForm" class="form-row" style="margin-top:12px">
-            <input id="locName" placeholder="地點名稱（例：迎風溜冰場）" required>
-            <input id="locCoord" placeholder="點地圖，或貼上座標 / Google 地圖連結" required style="flex:2 1 220px">
-            <span class="radius-in"><input id="locRadius" type="number" min="10" max="1000" value="50">公尺</span>
-            <button type="button" class="btn" id="locHere">使用目前位置</button>
-            <button class="btn primary">新增地點</button>
-          </form>
-          <p class="hint">在地圖上點一下就能選位置。員工必須在範圍內才能打卡；在下方班別列表為每個班別指定「上班」和「下班」打卡地點（例如接送車：上班在溜冰場、下班在學校）；下班選「同上班地點」就是同一個地方，都沒指定則不限地點。</p>
-          <div class="loc-list-wrap">
-            <table class="tbl">
-              <thead><tr><th>地點</th><th>座標</th><th>範圍（公尺）</th><th></th></tr></thead>
-              <tbody id="locList"></tbody>
-            </table>
-          </div>
+        <div class="view-head">
+          <div class="vh-title"><h2>班別設定</h2><div class="vh-sub" id="shSub">點班別可以修改時間、顏色、打卡地點</div></div>
+          <div class="vh-actions"><div class="seg" id="shTab"><button data-v="shift" class="on">班別</button><button data-v="loc">打卡地點</button></div></div>
         </div>
-        <div class="card">
-          <h3>新增班別</h3>
-          <form id="shiftForm" class="form-row">
-            <select id="shCat">
-              <option value="shift">班別</option>
-              <option value="leave">休假</option>
-            </select>
-            <input id="shName" placeholder="名稱（例：早班）" required>
-            <input id="shStart" type="time" title="開始時間">
-            <span>~</span>
-            <input id="shEnd" type="time" title="結束時間">
-            <input id="shColor" type="color" value="#2e9e3f" title="顏色">
-            <button class="btn primary">新增</button>
-          </form>
-          <p class="hint">休假類（國定假日、例假日…）可不填時間。有填時間的班別會用來判斷遲到 / 早退。</p>
-        </div>
-        <details class="card">
-          <summary><h3>批次新增班別</h3></summary>
-          <textarea id="shiftBulk" rows="6" placeholder="每行一個班別，格式：代碼,名稱,上班,下班,休息開始,休息結束（代碼、時間可省略）&#10;例：R001,迎風溜冰場(晨訓),09:00,10:30&#10;All,全日班,08:00,18:00,12:00,13:00&#10;只寫名稱也可以，名稱裡有時間（0740-0830）會自動帶入；休假類請在後面加「,休假」"></textarea>
-          <div class="form-row" style="margin-top:8px">
-            <button class="btn primary" id="shiftBulkBtn">批次新增</button>
-            <button class="btn" id="leaveDefaultBtn">一鍵加入預設休假</button>
-            <span class="hint" style="margin:0">同名班別會更新代碼與時間（保留顏色）。</span>
+
+        <!-- 班別 -->
+        <div id="shPaneShift">
+          <div class="emp-tools">
+            <input id="shSearch" placeholder="搜尋班別名稱或代碼">
+            <div class="seg" id="shFilter"><button data-v="" class="on">全部</button><button data-v="shift">上班</button><button data-v="leave">休假</button><button data-v="noloc">沒設地點</button></div>
           </div>
-        </details>
-        <div class="card">
-          <div class="form-row" style="margin-bottom:10px">
-            <button class="btn small danger" id="shDelSel">刪除勾選</button>
-            <button class="btn small danger" id="shDelAll">全部刪除</button>
+          <div class="sh-bar">
+            <label class="sh-all"><input type="checkbox" id="shAll"> 全選</label>
             <span class="hint" style="margin:0" id="shCount"></span>
+            <button class="btn small danger hidden" id="shDelSel">刪除勾選</button>
+            <button class="btn primary sh-add" id="shAddBtn">＋ 新增班別</button>
           </div>
-          <table class="tbl">
-            <thead><tr><th><input type="checkbox" id="shAll" title="全選"></th><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>打卡地點</th><th>顏色</th><th></th></tr></thead>
-            <tbody id="shiftList"></tbody>
-          </table>
+          <div class="card sh-list" id="shiftList"></div>
+          <details class="card">
+            <summary><h3>批次新增班別</h3></summary>
+            <textarea id="shiftBulk" rows="6" placeholder="每行一個班別，格式：代碼,名稱,上班,下班,休息開始,休息結束（代碼、時間可省略）&#10;例：R001,迎風溜冰場(晨訓),09:00,10:30&#10;All,全日班,08:00,18:00,12:00,13:00&#10;只寫名稱也可以，名稱裡有時間（0740-0830）會自動帶入；休假類請在後面加「,休假」"></textarea>
+            <div class="form-row" style="margin-top:8px">
+              <button class="btn primary" id="shiftBulkBtn">批次新增</button>
+              <button class="btn" id="leaveDefaultBtn">一鍵加入預設休假</button>
+              <button class="btn danger" id="shDelAll">全部刪除</button>
+              <span class="hint" style="margin:0">同名班別會更新代碼與時間（保留顏色）。</span>
+            </div>
+          </details>
+        </div>
+
+        <!-- 打卡地點 -->
+        <div id="shPaneLoc" class="hidden">
+          <div class="card">
+            <h3>新增打卡地點</h3>
+            <div class="loc-search">
+              <input id="locSearch" placeholder="搜尋地址或地點名稱（例：迎風河濱公園）、或貼上座標">
+              <button type="button" class="btn primary" id="locSearchBtn">搜尋</button>
+            </div>
+            <div id="locResults"></div>
+            <div id="locMap" class="loc-map"></div>
+            <form id="locForm" class="form-row" style="margin-top:12px">
+              <input id="locName" placeholder="地點名稱（例：迎風溜冰場）" required>
+              <input id="locCoord" placeholder="點地圖，或貼上座標 / Google 地圖連結" required style="flex:2 1 220px">
+              <span class="radius-in"><input id="locRadius" type="number" min="10" max="1000" value="50">公尺</span>
+              <button type="button" class="btn" id="locHere">使用目前位置</button>
+              <button class="btn primary">新增地點</button>
+            </form>
+            <p class="hint">在地圖上點一下就能選位置。員工要在範圍內才能打卡；到「班別」分頁點班別，指定上班、下班的打卡地點。</p>
+          </div>
+          <div class="card sh-list" id="locList"></div>
         </div>
       </section>
     </main>
@@ -626,6 +617,42 @@
 <div id="toast"></div>
 
 <!-- App 風格對話框 -->
+<!-- 班別資料 -->
+<div class="modal-mask hidden" id="shModal">
+  <div class="modal small-modal">
+    <div class="modal-head"><button class="btn link" data-close>取消</button><h3 id="smTitle">班別</h3><button class="btn link strong" id="smSave">儲存</button></div>
+    <div class="modal-body">
+      <div class="group">
+        <div class="field"><label>名稱</label><input id="smName" placeholder="例：迎風溜冰場(晨訓)"></div>
+        <div class="field"><label>類別</label><div class="seg wide" id="smCat"><button data-v="shift">上班</button><button data-v="leave">休假（不用打卡）</button></div></div>
+        <div class="field sm-time"><label>上班 / 下班時間</label><div class="sm-times"><input id="smStart" type="time"><span>→</span><input id="smEnd" type="time"></div></div>
+        <div class="field"><label>顏色</label><div class="sm-colors" id="smColors"></div></div>
+        <div class="field"><label>代碼（選填）</label><input id="smCode" placeholder="例：R001"></div>
+      </div>
+      <div class="group sm-loc">
+        <div class="field"><label>上班打卡地點</label><select id="smLoc"></select></div>
+        <div class="field"><label>下班打卡地點</label><select id="smOLoc"></select></div>
+        <p class="hint" style="margin:6px 0 0">接送車這類上下班地點不同的，分開選；下班選「同上班地點」就是同一個地方。</p>
+      </div>
+      <button class="btn danger em-del" id="smDel">刪除這個班別</button>
+    </div>
+  </div>
+</div>
+<!-- 打卡地點資料 -->
+<div class="modal-mask hidden" id="lcModal">
+  <div class="modal small-modal">
+    <div class="modal-head"><button class="btn link" data-close>取消</button><h3>打卡地點</h3><button class="btn link strong" id="lcSave">儲存</button></div>
+    <div class="modal-body">
+      <div class="group">
+        <div class="field"><label>名稱</label><input id="lcName"></div>
+        <div class="field"><label>打卡範圍（公尺）</label><div class="sm-radius"><input id="lcRadius" type="range" min="10" max="500" step="10"><b id="lcRadiusV"></b></div></div>
+        <div class="field"><label>位置</label><a id="lcMapLink" target="_blank" rel="noopener"></a></div>
+        <div class="field"><label>使用的班別</label><div id="lcUsed" class="lc-used"></div></div>
+      </div>
+      <button class="btn danger em-del" id="lcDel">刪除這個地點</button>
+    </div>
+  </div>
+</div>
 <!-- 員工資料 -->
 <div class="modal-mask hidden" id="empModal">
   <div class="modal small-modal">
@@ -686,6 +713,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=55"></script>
+<script type="module" src="app.js?v=56"></script>
 </body>
 </html>
