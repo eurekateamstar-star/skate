@@ -9,13 +9,13 @@
  *   FIREBASE_PROJECT_ID    Firebase 專案 ID
  *   FIREBASE_CLIENT_EMAIL  服務帳戶 JSON 裡的 client_email
  *   FIREBASE_PRIVATE_KEY   服務帳戶 JSON 裡的 private_key（請設成「密碼 / Secret」）
- *   ALLOWED_ORIGIN         你的網站網址，例如 https://你的帳號.github.io （不填則允許所有來源）
+ *   ALLOWED_ORIGIN         你的網站網址，例如 https://wild-horses-skating.pages.dev （不填則允許所有來源）
  *
  * LINE 圖文選單（選用）：
  *   LINE_MESSAGING_TOKEN   LINE 官方帳號 Messaging API 的 Channel access token（請設成「密碼 / Secret」）
  *   SETUP_KEY              自訂一組密碼，執行 /setup-richmenu?key=這組密碼 時使用
  *   LIFF_ID                （選填）預設 2012318362-VOU7aFr9
- *   SITE_URL               （選填）預設 https://eurekateamstar-star.github.io/skate
+ *   SITE_URL               （選填）預設 https://wild-horses-skating.pages.dev
  */
 
 export default {
@@ -314,7 +314,7 @@ async function lineApi(env, path, opt = {}, base = "https://api.line.me") {
 
 async function setupRichMenu(env) {
   const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
-  const SITE = (env.SITE_URL || "https://eurekateamstar-star.github.io/skate").replace(/\/$/, "");
+  const SITE = (env.SITE_URL || "https://wild-horses-skating.pages.dev").replace(/\/$/, "");
   const go = (view, extra = "") => ({ type: "uri", uri: `${LIFF}?view=${view}${extra}` });
   const box = (x, y, w, h, action) => ({ bounds: { x, y, width: w, height: h }, action });
   const third = Math.round(1436 / 3);
