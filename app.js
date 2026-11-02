@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=47";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=48";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -3205,6 +3205,8 @@ $("#mpPay").onclick = async e => {
 };
 
 /* ================= 薪資條圖片 ================= */
+let slipLogo = null;
+const loadSlipLogo = () => slipLogo ??= new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = "logo-wide.png?v=1"; });
 let slipFontReady = null;
 function loadSlipFont() {
   return slipFontReady ??= new Promise(res => {
@@ -3318,7 +3320,9 @@ async function drawPayslip(d) {
   c.fillStyle = "#86868b"; c.font = `500 24px ${F}`;
   c.fillText(`發放單位：野馬溜冰隊`, P, H - 110);
   c.fillText(`製表日期：${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()}`, P, H - 70);
-  drawSeal(c, W - P - 100, H - 140, 180);
+  const logo = await loadSlipLogo();
+  if (logo) { const lw = 400, lh = lw * logo.height / logo.width; c.drawImage(logo, W - P - lw, H - 60 - lh, lw, lh); }
+  else drawSeal(c, W - P - 100, H - 140, 180);
   return cv;
 }
 let slipCur = null;
