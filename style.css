@@ -723,3 +723,17 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 .ap-acts{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:14px}
 .ap-acts .btn{height:42px;font-size:15px}
 @media (max-width:768px){ .lv-types button{font-size:13px} }
+/* 請假月曆 */
+.lv-mhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.lv-mhead b{font-size:17px;font-weight:700}
+.lv-cal .rday.none .rnum{color:var(--muted);font-weight:400}
+.rdot.sh{background:var(--primary)}
+.lv-legend{display:flex;gap:14px;justify-content:center;font-size:12px;color:var(--muted);margin-top:6px}
+.lv-legend span{display:flex;align-items:center;gap:5px}
+.lv-sep{height:1px;background:var(--line,#e5e5ea);margin:14px 0}
+.lv-daytitle{font-size:16px;font-weight:700;margin-bottom:12px}
+.field .lv-shift input[type=checkbox]{width:22px;height:22px;height:22px;flex:0 0 22px;margin:0}
+.lv-shift{min-height:56px}
+.lv-no{color:#fff !important}
+.field label.lv-shift{display:flex;flex-direction:row;align-items:center;gap:12px;margin:0;font-size:inherit;color:var(--text)}
+.field label.lv-shift .lv-name{font-size:15px}

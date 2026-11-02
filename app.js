@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=38";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=39";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -2217,38 +2217,69 @@ function punchDetail(r, kind, plan, ds) {
 
 /* ================= 請假（員工） ================= */
 const LV_ST = { pending: ["warn", "審核中"], approved: ["ok", "已核准"], rejected: ["bad", "已退回"] };
-let lv = { date: null, sch: null, mine: [] };
+let lv = { month: null, date: null, sch: undefined, monthSch: {}, mine: [] };
 
 async function loadLeaveView() {
-  if (!$("#lvDate").value) $("#lvDate").value = ymd(new Date());
-  await Promise.all([loadLvDay(), loadMyLeaves()]);
+  if (!lv.month) { const t = ymd(new Date()); lv.month = t.slice(0, 7); lv.date = t; }
+  await Promise.all([loadLvMonth(), loadMyLeaves()]);
 }
 async function loadMyLeaves() {
   const snap = await getDocs(query(collection(db, "leaveRequests"), where("empId", "==", me.id)));
   lv.mine = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
   renderMyLeaves();
+  renderLvCal();
   renderLvShifts();
 }
-async function loadLvDay() {
-  lv.date = $("#lvDate").value;
+async function loadLvMonth() {
+  const [y, m] = lv.month.split("-").map(Number);
+  $("#lvMonthTitle").textContent = `${y}年${m}月`;
+  renderLvCal();
   $("#lvShifts").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
-  const d = await getDoc(doc(db, "schedules", `${me.id}_${lv.date}`));
-  lv.sch = d.exists() ? d.data() : null;
+  const month = lv.month;
+  const snap = await getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month)));
+  if (month !== lv.month) return;
+  lv.monthSch = {};
+  snap.forEach(d => { lv.monthSch[d.data().date] = d.data(); });
+  renderLvCal();
+  selectLvDay(lv.date);
+}
+const lvWorkIds = sch => (sch?.shiftIds || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave")
+  .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
+function renderLvCal() {
+  if (!lv.month) return;
+  const days = daysOfMonth(lv.month), today = ymd(new Date());
+  let html = [...WEEK].map(w => `<div class="hd">${w}</div>`).join("") + "<div></div>".repeat(days[0].getDay());
+  for (const d of days) {
+    const ds = ymd(d), sch = lv.monthSch[ds], ids = lvWorkIds(sch);
+    const pend = lv.mine.some(q => q.date === ds && q.status === "pending");
+    const off = ids.length && ids.some(id => sch?.leave?.[id]);
+    const f = pend ? "wait" : off ? "leave" : ids.length ? "sh" : "";
+    html += `<div class="rday ${ds === today ? "today" : ""} ${ds === lv.date ? "sel" : ""} ${d.getDay() % 6 === 0 ? "wkend" : ""} ${ids.length ? "" : "none"}" data-ds="${ds}">
+      <span class="rnum">${d.getDate()}</span><i class="rdot ${f}"></i></div>`;
+  }
+  $("#lvCal").innerHTML = html;
+}
+function selectLvDay(ds) {
+  if (!ds || ds.slice(0, 7) !== lv.month) ds = `${lv.month}-01`;
+  lv.date = ds;
+  lv.sch = lv.monthSch[ds] || null;
+  const d = new Date(ds + "T00:00:00");
+  $("#lvDayTitle").textContent = `${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
+  $$("#lvCal .rday").forEach(x => x.classList.toggle("sel", x.dataset.ds === ds));
   renderLvShifts();
 }
 function renderLvShifts() {
   if (!lv.date || lv.sch === undefined) return;
-  const ids = (lv.sch?.shiftIds || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave")
-    .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
+  const ids = lvWorkIds(lv.sch);
   if (!ids.length) { $("#lvShifts").innerHTML = `<p class="empty" style="padding:14px">這天沒有排班</p>`; $("#lvSubmit").disabled = true; return; }
   const taken = id => lv.sch?.leave?.[id] ? "已請假" : lv.mine.some(q => q.date === lv.date && q.status === "pending" && (q.shiftIds || []).includes(id)) ? "審核中" : "";
   $("#lvShifts").innerHTML = ids.map((id, i) => {
     const s = shiftMap[id], t = taken(id);
     return `<label class="lv-shift ${t ? "taken" : ""}"><input type="checkbox" value="${id}" ${t ? "disabled" : ""}>
-      <span class="lv-no">${i + 1}</span><span class="dot" style="background:${esc(s.color)}"></span>
+      <span class="lv-no" style="background:${esc(s.color || "#8e8e93")}">${i + 1}</span>
       <span class="lv-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span>${t ? `<span class="tag ${t === "已請假" ? "ok" : "warn"}">${t}</span>` : ""}</label>`;
   }).join("") + (ids.length > 1 ? `<button class="btn link lv-all" id="lvAll">全部勾選</button>` : "");
-  $("#lvSubmit").disabled = false;
+  $("#lvSubmit").disabled = ids.every(id => taken(id));
 }
 function renderMyLeaves() {
   $("#lvList").innerHTML = lv.mine.slice(0, 30).map(q => {
@@ -2262,10 +2293,10 @@ function renderMyLeaves() {
     </div>`;
   }).join("") || `<div class="card empty-card">還沒有請假紀錄</div>`;
 }
-const lvShift = n => { const d = new Date($("#lvDate").value + "T00:00:00"); d.setDate(d.getDate() + n); $("#lvDate").value = ymd(d); loadLvDay(); };
-$("#lvPrev").onclick = () => lvShift(-1);
-$("#lvNext").onclick = () => lvShift(1);
-$("#lvDate").onchange = () => loadLvDay();
+const lvMove = n => { const [y, m] = lv.month.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); lv.month = ymd(d).slice(0, 7); lv.date = lv.month === ymd(new Date()).slice(0, 7) ? ymd(new Date()) : `${lv.month}-01`; lv.sch = undefined; loadLvMonth(); };
+$("#lvPrev").onclick = () => lvMove(-1);
+$("#lvNext").onclick = () => lvMove(1);
+$("#lvCal").onclick = e => { const c = e.target.closest(".rday"); if (c) selectLvDay(c.dataset.ds); };
 $("#lvType").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) $$("#lvType button").forEach(x => x.classList.toggle("on", x === b)); };
 $("#lvShifts").onclick = e => { if (e.target.id === "lvAll") { e.preventDefault(); $$("#lvShifts input:not(:disabled)").forEach(i => i.checked = true); } };
 $("#lvSubmit").onclick = async () => {

@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=38">
+  <link rel="stylesheet" href="style.css?v=39">
 </head>
 <body>
 
@@ -121,13 +121,16 @@
       <!-- 請假 -->
       <section id="view-leave" class="view hidden">
         <div class="view-head">
-          <div class="vh-title"><h2>請假</h2><div class="vh-sub">選日期、勾選要請假的班別，送出後由管理者審核</div></div>
+          <div class="vh-title"><h2>請假</h2><div class="vh-sub">點月曆的日期、勾選班別，送出後由管理者審核</div></div>
         </div>
         <div class="card">
-          <div class="field"><label class="lv-label">請假日期</label>
-            <div class="lv-date"><button class="icon-btn" id="lvPrev"><svg class="ic"><use href="#i-left"/></svg></button>
-              <input type="date" id="lvDate"><button class="icon-btn" id="lvNext"><svg class="ic"><use href="#i-right"/></svg></button></div></div>
-          <div class="field"><label class="lv-label">選擇要請假的班別</label><div id="lvShifts" class="lv-shifts"></div></div>
+          <div class="lv-mhead"><button class="icon-btn" id="lvPrev"><svg class="ic"><use href="#i-left"/></svg></button>
+            <b id="lvMonthTitle"></b><button class="icon-btn" id="lvNext"><svg class="ic"><use href="#i-right"/></svg></button></div>
+          <div class="cal rec-cal lv-cal" id="lvCal"></div>
+          <div class="lv-legend"><span><i class="rdot sh"></i>有班</span><span><i class="rdot wait"></i>審核中</span><span><i class="rdot leave"></i>已請假</span></div>
+          <div class="lv-sep"></div>
+          <div class="lv-daytitle" id="lvDayTitle"></div>
+          <div class="field"><label class="lv-label">勾選要請假的班別</label><div id="lvShifts" class="lv-shifts"></div></div>
           <div class="field"><label class="lv-label">假別</label>
             <div class="seg wide lv-types" id="lvType">
               <button data-v="事假" class="on">事假</button><button data-v="病假">病假</button><button data-v="特休">特休</button><button data-v="公假">公假</button><button data-v="其他">其他</button>
@@ -613,6 +616,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=38"></script>
+<script type="module" src="app.js?v=39"></script>
 </body>
 </html>
