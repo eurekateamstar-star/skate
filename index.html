@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=57">
+  <link rel="stylesheet" href="style.css?v=58">
 </head>
 <body>
 
@@ -371,8 +371,16 @@
                 <button class="btn primary" id="rateSave">儲存</button>
               </div>
             </div>
-            <p class="hint">空白 = 0 元。可直接從原本的薪資 Excel（「薪資標準」工作表）匯入。</p>
-            <div class="rate-wrap"><table class="rate-tbl" id="rateTbl"></table></div>
+            <p class="hint">先選人（或選班別），再填每堂的錢；空白 = 0 元。也可以從原本的薪資 Excel（「薪資標準」工作表）匯入。</p>
+            <div class="rate-head">
+              <div class="seg" id="rateMode"><button data-v="emp" class="on">依人員設定</button><button data-v="shift">依班別設定</button></div>
+              <input id="rateSearch" placeholder="搜尋">
+            </div>
+            <div class="rate-pick" id="ratePick"></div>
+          </div>
+          <div class="card rate-panel">
+            <div class="rate-tools" id="rateTools"></div>
+            <div class="rate-list" id="rateList"></div>
           </div>
         </div>
       </section>
@@ -695,6 +703,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=57"></script>
+<script type="module" src="app.js?v=58"></script>
 </body>
 </html>

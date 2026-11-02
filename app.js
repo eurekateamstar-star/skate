@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=57";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=58";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -3701,24 +3701,77 @@ $("#payCsv").onclick = () => {
 };
 
 // ---- 薪資標準（單價表）----
-function renderRates() {
-  // 有設定單價的排前面（越多人有單價越前面），全空白的放最後
-  const cntS = id => Object.values(pay.rates).filter(r => +r?.[id] > 0).length;
-  const cntE = id => Object.values(pay.rates[id] || {}).filter(v => +v > 0).length;
-  const emps = activeEmployees().map((u, i) => ({ u, i, n: cntE(u.id) }))
-    .sort((a, b) => (b.n > 0) - (a.n > 0) || a.i - b.i).map(x => x.u);
-  const shifts = shiftTypes.filter(s => s.cat !== "leave").map((s, i) => ({ s, i, n: cntS(s.id) }))
-    .sort((a, b) => b.n - a.n || a.i - b.i).map(x => x.s);
-  $("#rateTbl").innerHTML = `<thead><tr><th class="rc">班別</th>${emps.map(u => `<th>${esc(u.name)}<small>${esc(u.empNo || "")}</small></th>`).join("")}</tr></thead>
-    <tbody>${shifts.map(s => `<tr><th class="rc"><span class="dot" style="background:${esc(s.color)}"></span>${esc(s.name)}</th>${emps.map(u =>
-      `<td><input type="number" min="0" step="50" data-e="${u.id}" data-s="${s.id}" value="${pay.rates[u.id]?.[s.id] || ""}"></td>`).join("")}</tr>`).join("")}</tbody>`;
+let rateUI = { mode: "emp", sel: null, dirty: false };
+const rateShifts = () => shiftTypes.filter(s => s.cat !== "leave");
+function setRate(eid, sid, v) {
+  v = +v || 0;
+  if (v > 0) (pay.rates[eid] ??= {})[sid] = v; else if (pay.rates[eid]) delete pay.rates[eid][sid];
+  rateUI.dirty = true; $("#rateSave").textContent = "儲存變更"; $("#rateSave").classList.add("pulse");
 }
+function renderRates() { renderRatePick(); renderRateList(); }
+function renderRatePick() {
+  const emp = rateUI.mode === "emp";
+  setSeg("#rateMode", rateUI.mode);
+  const q = $("#rateSearch").value.trim().toLowerCase();
+  const cntE = id => Object.values(pay.rates[id] || {}).filter(v => +v > 0).length;
+  const cntS = id => Object.values(pay.rates).filter(r => +r?.[id] > 0).length;
+  const items = emp
+    ? activeEmployees().map(u => ({ id: u.id, name: u.name, sub: u.empNo || "", n: cntE(u.id) }))
+    : rateShifts().map(s => ({ id: s.id, name: s.name, color: s.color, n: cntS(s.id) }));
+  if (!items.some(x => x.id === rateUI.sel)) rateUI.sel = (items.find(x => x.n) || items[0])?.id || null;
+  $("#ratePick").innerHTML = items.filter(x => !q || x.name.toLowerCase().includes(q)).map(x =>
+    `<button class="emp-chip ${x.id === rateUI.sel ? "on" : ""}" data-id="${x.id}">${x.color ? `<i class="dot" style="background:${esc(x.color)}"></i>` : ""}${esc(x.name)}<small>${x.n ? (emp ? `${x.n} 個班` : `${x.n} 人`) : "未設定"}</small></button>`).join("")
+    || `<p class="hint" style="margin:0">找不到</p>`;
+}
+function renderRateList() {
+  const emp = rateUI.mode === "emp", sel = rateUI.sel;
+  if (!sel) { $("#rateTools").innerHTML = ""; $("#rateList").innerHTML = `<p class="empty">請先建立${emp ? "員工" : "班別"}</p>`; return; }
+  if (emp) {
+    const u = employees.find(x => x.id === sel);
+    const others = activeEmployees().filter(x => x.id !== sel && Object.keys(pay.rates[x.id] || {}).length);
+    $("#rateTools").innerHTML = `<div class="rt-title"><b>${esc(u?.name || "")}</b> 的每堂單價</div>
+      <div class="rt-acts"><select id="rateCopyFrom"><option value="">從別人複製單價…</option>${others.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>`;
+    const list = rateShifts().map((s, i) => ({ s, i, v: pay.rates[sel]?.[s.id] || "" })).sort((a, b) => (!!b.v - !!a.v) || a.i - b.i);
+    $("#rateList").innerHTML = list.map(({ s, v }) => `<label class="rate-row ${v ? "" : "empty"}">
+      <i class="dot" style="background:${esc(s.color)}"></i><span class="rr-name">${esc(s.name)}<small>${s.start && s.end ? `${s.start}–${s.end}` : ""}</small></span>
+      <span class="rr-in">$<input type="number" inputmode="numeric" min="0" step="50" data-e="${sel}" data-s="${s.id}" value="${v}" placeholder="0"></span></label>`).join("");
+  } else {
+    const s = shiftMap[sel];
+    $("#rateTools").innerHTML = `<div class="rt-title"><i class="dot" style="background:${esc(s?.color)}"></i><b>${esc(s?.name || "")}</b> 每個人的單價</div>
+      <div class="rt-acts"><input type="number" inputmode="numeric" id="rateFillV" placeholder="金額"><button class="btn small" id="rateFillAll">全部人填這個價錢</button></div>`;
+    const list = activeEmployees().map((u, i) => ({ u, i, v: pay.rates[u.id]?.[sel] || "" })).sort((a, b) => (!!b.v - !!a.v) || a.i - b.i);
+    $("#rateList").innerHTML = list.map(({ u, v }) => `<label class="rate-row ${v ? "" : "empty"}">
+      <span class="rr-name">${esc(u.name)}<small>${esc(u.empNo || "")}</small></span>
+      <span class="rr-in">$<input type="number" inputmode="numeric" min="0" step="50" data-e="${u.id}" data-s="${sel}" value="${v}" placeholder="0"></span></label>`).join("");
+  }
+}
+$("#rateMode").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; rateUI.mode = b.dataset.v; rateUI.sel = null; renderRates(); };
+$("#rateSearch").oninput = renderRates;
+$("#ratePick").onclick = e => { const b = e.target.closest(".emp-chip[data-id]"); if (!b) return; rateUI.sel = b.dataset.id; renderRates(); };
+$("#rateList").oninput = e => { const i = e.target.closest("input[data-e]"); if (!i) return; setRate(i.dataset.e, i.dataset.s, i.value); i.closest(".rate-row").classList.toggle("empty", !(+i.value > 0)); };
+$("#rateList").onchange = () => renderRatePick();
+$("#rateTools").onchange = e => {
+  if (e.target.id !== "rateCopyFrom" || !e.target.value) return;
+  const src = pay.rates[e.target.value] || {};
+  Object.entries(src).forEach(([sid, v]) => setRate(rateUI.sel, sid, v));
+  toast(`已複製 ${Object.keys(src).length} 個單價，記得按儲存`);
+  renderRates();
+};
+$("#rateTools").onclick = e => {
+  if (e.target.id !== "rateFillAll") return;
+  const v = +$("#rateFillV").value;
+  if (!(v > 0)) return toast("請先輸入金額");
+  activeEmployees().forEach(u => setRate(u.id, rateUI.sel, v));
+  toast(`已全部填入 $${v}，記得按儲存`);
+  renderRates();
+};
 $("#rateSave").onclick = async () => {
   const rates = {};
-  $$("#rateTbl input").forEach(i => { const v = +i.value; if (v > 0) (rates[i.dataset.e] ??= {})[i.dataset.s] = v; });
+  Object.entries(pay.rates).forEach(([e, m]) => Object.entries(m || {}).forEach(([sid, v]) => { if (+v > 0) (rates[e] ??= {})[sid] = +v; }));
   try {
     await setDoc(doc(db, "payRates", "all"), { rates, updatedAt: serverTimestamp() });
     pay.rates = rates;
+    rateUI.dirty = false; $("#rateSave").textContent = "儲存"; $("#rateSave").classList.remove("pulse");
     toast("薪資標準已儲存");
   } catch (err) { appAlert("儲存失敗", errMsg(err) + "\n請確認 firestore.rules 已更新為最新版。"); }
 };
@@ -3757,6 +3810,7 @@ $("#rateXlsx").onchange = async e => {
       cols.forEach(c => { const v = +r[c.i]; if (v > 0) { (rates[c.u.id] ??= {})[s.id] = v; n++; } });
     });
     pay.rates = rates;
+    rateUI.dirty = true; $("#rateSave").textContent = "儲存變更"; $("#rateSave").classList.add("pulse");
     renderRates();
     appAlert("已讀入單價", `讀入 ${n} 個單價（${cols.length} 位員工）。` + (miss.length ? `\n對不到的班別：${miss.join("、")}` : "") + "\n確認無誤後請按「儲存」。");
   } catch (err) { appAlert("匯入失敗", err.message || String(err)); }

@@ -927,3 +927,25 @@ body.loading .load-bar{opacity:1}
 .rp-t.none{color:#c7c7cc}
 @media (max-width:768px){ .rep-people{grid-template-columns:1fr 1fr} .rp-card{padding:12px} .rp-io{padding-left:0} .rp-row{padding:12px} }
 .rep-people{margin-bottom:12px}
+/* 薪資標準 */
+.rate-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.rate-head input{flex:1;min-width:140px;height:38px}
+.rate-pick{display:flex;flex-wrap:wrap;gap:8px;max-height:200px;overflow:auto}
+.rate-pick .emp-chip .dot{margin-right:4px}
+.rate-panel{padding:0;overflow:hidden}
+.rate-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--sep-2,#eee);background:var(--fill)}
+.rt-title{flex:1;min-width:160px;display:flex;align-items:center;gap:6px;font-size:15px}
+.rt-acts{display:flex;gap:8px;align-items:center}
+.rt-acts input{width:100px;height:34px}
+.rt-acts select{height:34px}
+.rate-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--sep-2,#f0f0f2);cursor:text}
+.rate-row:last-child{border-bottom:0}
+.rate-row.empty .rr-name{color:var(--muted)}
+.rr-name{flex:1;min-width:0;display:flex;flex-direction:column;font-size:15px;font-weight:500}
+.rr-name small{font-size:12px;color:var(--muted);font-weight:400}
+.rr-in{display:flex;align-items:center;gap:4px;color:var(--muted);font-weight:600}
+.rr-in input{width:110px;height:40px;text-align:right;font-size:16px;font-weight:600}
+.rate-row.empty .rr-in input{background:#fff;border:1px dashed #d2d2d7}
+#rateSave.pulse{box-shadow:0 0 0 4px rgba(0,113,227,.25)}
+@media (max-width:768px){ .rr-in input{width:96px} .rate-tools{padding:12px} .rate-row{padding:10px 12px} }
+.rate-row,.rr-name{text-align:left;align-items:flex-start}.rate-row{align-items:center}
