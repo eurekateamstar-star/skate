@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=54";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=55";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -698,6 +698,13 @@ function renderPunchCards() {
     const inLoc = locFor(s, "in"), outLoc = locFor(s, "out");
     const two = inLoc?.id !== outLoc?.id;
     const chkIn = rangeCheck(inLoc), chkOut = rangeCheck(outLoc);
+    const pendReq = !clockShifts.includes(id) ? myShiftReqs.find(q => q.shiftId === id && q.status === "pending") : null;
+    if (pendReq) {
+      return `<div class="card punch-card pending"><div class="pc-head"><span class="dot" style="background:${esc(s.color)}"></span>
+        <div class="pc-title"><b>${esc(s.name)}</b>${time ? `<span>${time}</span>` : ""}</div><span class="pc-pill wait">審核中</span></div>
+        <div class="pc-btns"><button class="btn big" disabled><span>上班</span><small>等管理者審核</small></button><button class="btn big" disabled><span>下班</span><small>等管理者審核</small></button></div>
+        <p class="pc-note">加入班表申請已送出，管理者核准後就可以打卡（超過時間會改成補打卡）</p></div>`;
+    }
     const recs = todayRecs.filter(r => r.shiftId === id);
     const inR = recs.filter(r => r.type === "in")[0];
     const outR = recs.filter(r => r.type === "out").at(-1);
@@ -831,7 +838,7 @@ $("#otherModal").onclick = async e => {
   if (e.target.id === "otherModal" || e.target.closest("[data-close]")) return closeOther();
   const b = e.target.closest(".ot-item[data-sid]"); if (!b || b.disabled) return;
   const s = shiftMap[b.dataset.sid];
-  if (!(await appConfirm("申請這個班", `${s.name}${s.start && s.end ? `（${s.start}–${s.end}）` : ""}\n送出後就可以先打卡，管理者審核通過會加進你今天的班表。`, { okText: "送出申請" }))) return;
+  if (!(await appConfirm("申請這個班", `${s.name}${s.start && s.end ? `（${s.start}–${s.end}）` : ""}\n管理者核准、加進你今天的班表後就可以打卡。`, { okText: "送出申請" }))) return;
   const today = ymd(new Date());
   try {
     const data = { empId: me.id, name: me.name, empNo: me.empNo || "", date: today, month: today.slice(0, 7), shiftId: s.id, shiftName: s.name,
@@ -841,7 +848,7 @@ $("#otherModal").onclick = async e => {
     myShiftReqs.push({ id: ref.id, ...data });
     calcExtra(); renderPunchCards(); updateClockMap();
     closeOther();
-    toast("已送出，現在可以打卡了");
+    toast("已送出，等管理者核准後就能打卡");
   } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
 };
 
@@ -2873,7 +2880,7 @@ $("#apList").onclick = async e => {
   if (!b) return;
   const q = ap[ap.tab].find(x => x.id === b.closest(".ap-item").dataset.id);
   if (!q) return;
-  if (ap.tab !== "punch") {
+  if (ap.tab === "leave" || ap.tab === "done") {
     if (b.dataset.ap === "edit") return openLeaveModal(q);
     lm = { q };
     if (b.dataset.ap === "reject") return lmRun("reject");

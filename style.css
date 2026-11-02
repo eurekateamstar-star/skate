@@ -859,3 +859,8 @@ body.loading .load-bar{opacity:1}
   .emp-tools .seg{width:100%}
   .emp-tools .seg button{flex:1}
 }
+.pc-pill.wait{background:#e5e5ea;color:#6e6e73}
+.punch-card.pending{opacity:.85}
+.punch-card.pending .btn.big{background:#e5e5ea;color:#8e8e93;box-shadow:none}
+.pc-note{margin:10px 2px 0;font-size:12.5px;color:var(--muted);text-align:center}
+.punch-card.pending .pc-btns{margin-top:14px}

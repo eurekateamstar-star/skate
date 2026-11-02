@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=54">
+  <link rel="stylesheet" href="style.css?v=55">
 </head>
 <body>
 
@@ -118,7 +118,7 @@
         </div>
         <div class="card map-card hidden" id="mapCard"><div id="clockMap" class="mini-map"></div></div>
         <div id="shiftPunch"></div>
-        <button class="btn other-punch" id="otherPunchBtn"><span>＋ 申請其他班別打卡</span><small>沒排到班、忘記加班表時使用，送出後就能打卡</small></button>
+        <button class="btn other-punch" id="otherPunchBtn"><span>＋ 申請其他班別打卡</span><small>沒排到班、忘記加班表時使用，管理者核准後就能打卡</small></button>
       </section>
 
       <!-- 請假 -->
@@ -651,7 +651,7 @@
     <div class="modal-body">
       <input id="otFilter" class="ot-filter" placeholder="搜尋班別">
       <div id="otList" class="ot-list"></div>
-      <p class="hint">依你過去的排班排序：同一個星期幾常排的在最前面。送出後就可以先打卡，管理者審核通過會加進你的班表。</p>
+      <p class="hint">依你過去的排班排序：同一個星期幾常排的在最前面。送出後等管理者核准，加進你的班表就可以打卡。</p>
     </div>
   </div>
 </div>
@@ -686,6 +686,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=54"></script>
+<script type="module" src="app.js?v=55"></script>
 </body>
 </html>
