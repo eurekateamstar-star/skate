@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=60">
+  <link rel="stylesheet" href="style.css?v=62">
 </head>
 <body>
 
@@ -418,13 +418,33 @@
       <section id="view-employees" class="view hidden">
         <div class="view-head">
           <div class="vh-title"><h2>員工管理</h2><div class="vh-sub" id="empSub">點員工可修改資料、權限、解除 LINE 綁定</div></div>
-          <div class="vh-actions"><button class="btn primary" id="empAddBtn">＋ 新增員工</button></div>
+          <div class="vh-actions mob-only-i"><button class="btn primary" id="empAddBtn">＋ 新增員工</button></div>
         </div>
-        <div class="emp-tools">
+        <!-- 電腦版：原本的表格 -->
+        <div class="desk-only">
+          <div class="card">
+            <h3>新增員工</h3>
+            <form id="empForm" class="form-row">
+              <input id="eNo" placeholder="員編" size="8">
+              <input id="eName" placeholder="姓名" required size="10">
+              <input id="eEmail" type="email" placeholder="Email（綁定驗證用）" required>
+              <select id="eRole"><option value="employee">員工</option><option value="admin">管理者</option></select>
+              <button class="btn primary">新增</button>
+            </form>
+          </div>
+          <div class="card">
+            <table class="tbl">
+              <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th>LINE 綁定</th><th>狀態</th><th></th></tr></thead>
+              <tbody id="empListT"></tbody>
+            </table>
+          </div>
+        </div>
+        <!-- 手機版：清單 -->
+        <div class="emp-tools mob-flex">
           <input id="empSearch" placeholder="搜尋姓名、員編、Email">
           <div class="seg" id="empFilter"><button data-v="" class="on">全部</button><button data-v="unbound">未綁定</button><button data-v="admin">管理者</button><button data-v="off">停用</button></div>
         </div>
-        <div class="card emp-card-list" id="empList"></div>
+        <div class="card emp-card-list mob-only" id="empList"></div>
         <details class="card">
           <summary><h3>批次匯入員工</h3></summary>
           <textarea id="importText" rows="6" placeholder="每行一位：員編,姓名,Email,到職日,權限&#10;例：W002,蔡宛如,george52069@gmail.com,2025-08-31&#10;權限可留空（預設員工），填 admin 為管理者"></textarea>
@@ -743,6 +763,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=60"></script>
+<script type="module" src="app.js?v=62"></script>
 </body>
 </html>

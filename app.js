@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=60";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=62";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -1340,7 +1340,57 @@ async function loadEmployeesView() {
   await loadEmployees();
   syncStaff().catch(() => {});
   renderEmpList();
+  renderEmpTable();
 }
+// 電腦版：原本的表格（直接在表格裡修改）
+function renderEmpTable() {
+  $("#empListT").innerHTML = employees.map(u => {
+    const locked = empLocked(u);
+    const lineCell = u.lineUid
+      ? `<span class="line-cell">${u.linePicture ? `<img class="avatar" src="${esc(u.linePicture)}" alt="">` : ""}${esc(u.lineName || "已綁定")}</span>`
+      : locked ? `<span class="tag bad">已鎖定</span>` : `<span class="tag">未綁定</span>`;
+    return `<tr data-id="${u.id}">
+      <td><input class="e-no" value="${esc(u.empNo)}" size="6"></td>
+      <td><input class="e-name" value="${esc(u.name)}" size="8"></td>
+      <td><input class="e-email" type="email" value="${esc(u.email)}" size="20"></td>
+      <td><select class="e-role"><option value="employee" ${u.role !== "admin" ? "selected" : ""}>員工</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>管理者</option></select></td>
+      <td>${lineCell}</td>
+      <td><select class="e-active"><option value="1" ${u.active !== false ? "selected" : ""}>在職</option><option value="0" ${u.active === false ? "selected" : ""}>停用</option></select></td>
+      <td><button class="btn small primary e-save">儲存</button>
+        ${u.lineUid || locked ? `<button class="btn small e-unbind">解除綁定</button>` : ""}
+        ${u.id !== me.id ? `<button class="btn small danger e-del">刪除</button>` : ""}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">尚無員工</td></tr>`;
+}
+$("#empForm").onsubmit = async e => {
+  e.preventDefault();
+  const data = { empNo: $("#eNo").value.trim(), name: $("#eName").value.trim(), email: $("#eEmail").value.trim().toLowerCase(), role: $("#eRole").value,
+    active: true, lineUid: null, lineName: "", linePicture: "", bindFails: 0, createdAt: serverTimestamp() };
+  if (!data.name || !data.email) return;
+  if (employees.some(x => (x.email || "").toLowerCase() === data.email)) return toast("此 Email 已有員工使用");
+  try { await addDoc(collection(db, "employees"), data); e.target.reset(); toast("已新增員工"); loadEmployeesView(); }
+  catch (err) { toast("新增失敗：" + errMsg(err)); }
+};
+$("#empListT").onclick = async e => {
+  const tr = e.target.closest("tr[data-id]"); if (!tr) return;
+  const id = tr.dataset.id, emp = employees.find(x => x.id === id);
+  try {
+    if (e.target.classList.contains("e-save")) {
+      const data = { empNo: $(".e-no", tr).value.trim(), name: $(".e-name", tr).value.trim(), email: $(".e-email", tr).value.trim().toLowerCase(),
+        role: $(".e-role", tr).value, active: $(".e-active", tr).value === "1" };
+      if (!data.name) return toast("姓名不可空白");
+      if (id === me.id && (data.role !== "admin" || !data.active)
+        && !(await appConfirm("變更自己的權限", "確定要取消自己的管理者權限或停用自己？之後將無法進入管理功能。", { okText: "確定變更", danger: true }))) return;
+      await updateDoc(doc(db, "employees", id), data); toast("已儲存"); loadEmployeesView();
+    } else if (e.target.classList.contains("e-unbind")) {
+      if (!(await appConfirm("解除 LINE 綁定", `解除「${emp.name}」的 LINE 綁定？他下次登入需要重新綁定。`, { okText: "解除綁定", danger: true }))) return;
+      await updateDoc(doc(db, "employees", id), { lineUid: null, lineName: "", linePicture: "", bindFails: 0 }); toast("已解除綁定"); loadEmployeesView();
+    } else if (e.target.classList.contains("e-del")) {
+      if (!(await appConfirm("刪除員工", `刪除「${emp.name}」？打卡紀錄會保留。`, { okText: "刪除", danger: true }))) return;
+      await deleteDoc(doc(db, "employees", id)); toast("已刪除"); loadEmployeesView();
+    }
+  } catch (err) { toast("操作失敗：" + errMsg(err)); }
+};
 const empBound = u => !!u.lineUid, empLocked = u => !u.lineUid && (u.bindFails || 0) >= 5;
 function renderEmpList() {
   const q = $("#empSearch").value.trim().toLowerCase();

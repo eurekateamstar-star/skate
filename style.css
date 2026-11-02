@@ -957,3 +957,6 @@ body.loading .load-bar{opacity:1}
   #view-shifts > .view-head{order:0} #shPaneLoc{order:1} #shPaneShift{order:2}
   #shiftList,#locList{padding:0;overflow-x:auto}
 }
+#empListT td:last-child{white-space:nowrap}
+.desk-only .card:has(#empListT){overflow-x:auto}
+#empListT input.e-email{width:100%;min-width:160px}
