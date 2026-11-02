@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=46">
+  <link rel="stylesheet" href="style.css?v=47">
 </head>
 <body>
 
@@ -360,6 +360,7 @@
               <label class="sw"><input type="checkbox" id="payMissing"><span></span>未打卡（上下班都沒打）照算薪資</label>
             </div>
             <div class="pf-row">
+              <button class="btn" id="paySlipsBtn">下載薪資條</button>
               <button class="btn primary" id="payPublish">發布薪資</button>
               <select id="payStatus">
                 <option value="">全部狀態</option>
@@ -634,6 +635,13 @@
 <div id="toast"></div>
 
 <!-- App 風格對話框 -->
+<!-- 薪資條預覽 -->
+<div class="modal-mask hidden" id="slipModal">
+  <div class="modal small-modal">
+    <div class="modal-head"><button class="btn link" data-close>關閉</button><h3>薪資條</h3><button class="btn link strong" id="slipDl">下載</button></div>
+    <div class="modal-body"><img id="slipImg" class="slip-img" alt="薪資條"><p class="hint" style="text-align:center">手機可長按圖片「儲存影像」</p></div>
+  </div>
+</div>
 <div class="dlg-mask hidden" id="dlg">
   <div class="dlg">
     <div class="dlg-body">
@@ -658,6 +666,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=46"></script>
+<script type="module" src="app.js?v=47"></script>
 </body>
 </html>

@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=46";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=47";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -3169,7 +3169,8 @@ function renderMyPay() {
       ${sl.bonus ? `<tr class="adj"><td colspan="3">加給${sl.note ? `（${esc(sl.note)}）` : ""}</td><td>+${money(sl.bonus)}</td></tr>` : ""}
       ${sl.deduct ? `<tr class="adj"><td colspan="3">扣款${!sl.bonus && sl.note ? `（${esc(sl.note)}）` : ""}</td><td>−${money(sl.deduct)}</td></tr>` : ""}
     </tbody></table>
-    <div class="mp-foot">發布時間 ${fmtTs(sl.publishedAt)}</div>` : `
+    <div class="mp-foot">發布時間 ${fmtTs(sl.publishedAt)}</div>
+    <button class="btn mp-slipbtn" id="mpSlipBtn">下載薪資條</button>` : `
     <div class="mp-head"><span>${y}年${+m}月 薪資</span><span class="tag muted">未結算</span></div>
     <div class="mp-total none">未結算薪資</div>
     <p class="hint" style="margin:6px 0 0">請先核對下方打卡明細並按「確認無誤」，管理者結算發布後會顯示金額。</p>`;
@@ -3196,6 +3197,175 @@ function renderMyPay() {
   }).join("") || `<p class="empty" style="padding:16px">這個月沒有排班或打卡紀錄</p>`;
 }
 $("#mpMonth").onchange = () => loadMyPay();
+$("#mpPay").onclick = async e => {
+  if (e.target.id !== "mpSlipBtn" || !mp.slip) return;
+  const sl = mp.slip, n = st => mp.items.filter(i => i.st === st).length;
+  const cv = await drawPayslip({ ...sl, name: sl.name || me.name, empNo: sl.empNo || me.empNo, stats: { ok: n("ok"), forgot: n("forgot"), missing: n("missing"), leave: n("leave") }, date: sl.publishedAt?.toDate?.() || new Date() });
+  showSlip(cv, `薪資條_${sl.month}_${sl.name || me.name}.png`);
+};
+
+/* ================= 薪資條圖片 ================= */
+let slipFontReady = null;
+function loadSlipFont() {
+  return slipFontReady ??= new Promise(res => {
+    const l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = "https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@900&text=" + encodeURIComponent("野馬溜冰隊印");
+    l.onload = () => document.fonts.load('900 80px "Noto Serif TC"', "野馬溜冰隊印").then(res, res);
+    l.onerror = res;
+    document.head.appendChild(l);
+    setTimeout(res, 4000);
+  });
+}
+// 官印：野馬溜冰隊印（由右至左、由上而下）
+function drawSeal(ctx, cx, cy, size) {
+  const red = "#c8102e";
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(-0.07);
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = red; ctx.fillStyle = red;
+  const h = size / 2, r = size * 0.06;
+  ctx.lineWidth = size * 0.065;
+  ctx.beginPath(); ctx.roundRect(-h, -h, size, size, r); ctx.stroke();
+  ctx.lineWidth = size * 0.015;
+  ctx.beginPath(); ctx.roundRect(-h + size * 0.075, -h + size * 0.075, size * 0.85, size * 0.85, r * 0.6); ctx.stroke();
+  const cols = [["野", "馬"], ["溜", "冰"], ["隊", "印"]];
+  const fs = size * 0.31;
+  ctx.font = `900 ${fs}px "Noto Serif TC","Songti TC","PMingLiU",serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  const cw = size * 0.85 / 3;
+  cols.forEach((col, i) => {
+    const x = h - size * 0.075 - cw * (i + 0.5);
+    col.forEach((ch, j) => {
+      const y = -h + size * 0.075 + size * 0.85 * (j === 0 ? 0.27 : 0.73);
+      ctx.save(); ctx.translate(x, y); ctx.scale(0.86, 1.18); ctx.fillText(ch, 0, 0); ctx.restore();
+    });
+  });
+  // 蓋印的斑駁感
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.globalAlpha = 1;
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 260; i++) {
+    const x = (rnd() - 0.5) * size, y = (rnd() - 0.5) * size, rr = rnd() * size * 0.012 + 0.6;
+    ctx.globalAlpha = rnd() * 0.7;
+    ctx.beginPath(); ctx.arc(x, y, rr, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+}
+async function drawPayslip(d) {
+  await loadSlipFont();
+  const W = 1080, P = 72, F = '-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif';
+  const groups = (d.groups || []).filter(g => g.paidN || g.sub);
+  const adjRows = (d.bonus ? 1 : 0) + (d.deduct ? 1 : 0);
+  const H = 1010 + groups.length * 64 + adjRows * 64 + (d.note ? 60 : 0);
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const c = cv.getContext("2d");
+  c.fillStyle = "#ffffff"; c.fillRect(0, 0, W, H);
+  // 頁首
+  c.fillStyle = "#c8102e"; c.fillRect(0, 0, W, 14);
+  const [y, m] = String(d.month).split("-");
+  c.fillStyle = "#1d1d1f"; c.font = `700 52px ${F}`; c.textBaseline = "alphabetic";
+  c.fillText("野馬溜冰隊　薪資條", P, 120);
+  c.fillStyle = "#86868b"; c.font = `500 30px ${F}`;
+  c.fillText(`${y} 年 ${+m} 月`, P, 170);
+  // 員工
+  c.fillStyle = "#f5f5f7"; c.beginPath(); c.roundRect(P, 210, W - P * 2, 110, 20); c.fill();
+  c.fillStyle = "#1d1d1f"; c.font = `700 40px ${F}`; c.fillText(d.name || "", P + 32, 278);
+  c.fillStyle = "#86868b"; c.font = `500 28px ${F}`; c.textAlign = "right";
+  c.fillText(d.empNo ? `員編 ${d.empNo}` : "", W - P - 32, 276); c.textAlign = "left";
+  // 表格
+  let yy = 390;
+  const col = [P, W - P - 430, W - P - 230, W - P];
+  c.fillStyle = "#86868b"; c.font = `600 26px ${F}`;
+  c.fillText("班別", col[0], yy);
+  c.textAlign = "right"; c.fillText("堂數", col[1] + 60, yy); c.fillText("單價", col[2] + 40, yy); c.fillText("小計", col[3], yy); c.textAlign = "left";
+  yy += 22; c.fillStyle = "#d2d2d7"; c.fillRect(P, yy, W - P * 2, 2); yy += 50;
+  const row = (name, n, rate, sub, color = "#1d1d1f") => {
+    c.fillStyle = color; c.font = `500 30px ${F}`;
+    let nm = name; while (c.measureText(nm).width > col[1] - col[0] - 40 && nm.length > 1) nm = nm.slice(0, -1);
+    c.fillText(nm === name ? nm : nm + "…", col[0], yy);
+    c.textAlign = "right";
+    c.fillText(n, col[1] + 60, yy); c.fillText(rate, col[2] + 40, yy);
+    c.font = `600 30px ${F}`; c.fillText(sub, col[3], yy); c.textAlign = "left";
+    yy += 20; c.fillStyle = "#f0f0f2"; c.fillRect(P, yy, W - P * 2, 2); yy += 44;
+  };
+  groups.forEach(g => row(g.name, String(g.paidN), g.rate ? money(g.rate) : "—", money(g.sub)));
+  if (d.bonus) row("加給", "", "", "+" + money(d.bonus), "#1d7a3a");
+  if (d.deduct) row("扣款", "", "", "−" + money(d.deduct), "#b42318");
+  if (d.note) { c.fillStyle = "#86868b"; c.font = `500 26px ${F}`; c.fillText(`備註：${d.note}`, P, yy); yy += 60; }
+  // 合計
+  yy += 10;
+  c.fillStyle = "#1d1d1f"; c.font = `600 32px ${F}`; c.fillText("實發金額", P, yy + 10);
+  c.fillStyle = "#c8102e"; c.font = `800 64px ${F}`; c.textAlign = "right"; c.fillText(money(d.total || 0), W - P, yy + 18); c.textAlign = "left";
+  yy += 80;
+  // 出勤摘要
+  const st = d.stats;
+  if (st) {
+    const items = [["正常", st.ok], ["忘記打卡", st.forgot], ["未打卡", st.missing], ["請假", st.leave]];
+    const bw = (W - P * 2 - 36) / 4;
+    items.forEach(([t, v], i) => {
+      const x = P + i * (bw + 12);
+      c.fillStyle = "#f5f5f7"; c.beginPath(); c.roundRect(x, yy, bw, 100, 16); c.fill();
+      c.textAlign = "center"; c.fillStyle = "#1d1d1f"; c.font = `700 36px ${F}`; c.fillText(String(v ?? 0), x + bw / 2, yy + 50);
+      c.fillStyle = "#86868b"; c.font = `500 22px ${F}`; c.fillText(t, x + bw / 2, yy + 82); c.textAlign = "left";
+    });
+    yy += 130;
+  }
+  // 頁尾＋官印
+  const dt = d.date instanceof Date ? d.date : new Date();
+  c.fillStyle = "#86868b"; c.font = `500 24px ${F}`;
+  c.fillText(`發放單位：野馬溜冰隊`, P, H - 110);
+  c.fillText(`製表日期：${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()}`, P, H - 70);
+  drawSeal(c, W - P - 100, H - 140, 180);
+  return cv;
+}
+let slipCur = null;
+function showSlip(cv, filename) {
+  slipCur = { url: cv.toDataURL("image/png"), filename };
+  $("#slipImg").src = slipCur.url;
+  $("#slipModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#slipModal").classList.add("open"));
+}
+function downloadUrl(url, filename) { const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); }
+$("#slipDl").onclick = () => slipCur && downloadUrl(slipCur.url, slipCur.filename);
+$("#slipModal").onclick = e => { if (e.target.id === "slipModal" || e.target.closest("[data-close]")) { $("#slipModal").classList.remove("open"); setTimeout(() => $("#slipModal").classList.add("hidden"), 200); } };
+
+// 管理者：一鍵下載所有人的薪資條（ZIP）
+let jszipReady = null;
+const loadJSZip = () => jszipReady ??= new Promise((res, rej) => {
+  if (window.JSZip) return res();
+  const sc = document.createElement("script");
+  sc.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+  sc.onload = res; sc.onerror = () => { jszipReady = null; rej(new Error("壓縮工具載入失敗")); };
+  document.head.appendChild(sc);
+});
+$("#paySlipsBtn").onclick = async () => {
+  const rows = selectedEmps().map(calcEmp).filter(c => c.paidN || c.total);
+  if (!rows.length) return toast("沒有可下載的薪資");
+  const unpub = rows.filter(c => !pay.slips?.[c.u.id]).length;
+  if (unpub && !(await appConfirm("下載薪資條", `${unpub} 人還沒發布，會用目前畫面上的金額產生。`, { okText: "繼續下載" }))) return;
+  const btn = $("#paySlipsBtn"); btn.disabled = true;
+  try {
+    await loadJSZip();
+    const zip = new JSZip();
+    for (let i = 0; i < rows.length; i++) {
+      const cnt = rows[i];
+      btn.textContent = `產生中 ${i + 1}/${rows.length}`;
+      const cv = await drawPayslip({ name: cnt.u.name, empNo: cnt.u.empNo, month: pay.month, groups: cnt.groups, bonus: +cnt.adj.bonus || 0, deduct: +cnt.adj.deduct || 0, note: cnt.adj.note || "",
+        total: cnt.total, stats: { ok: cnt.ok, forgot: cnt.forgot, missing: cnt.missing, leave: cnt.leave }, date: new Date() });
+      const blob = await new Promise(r => cv.toBlob(r, "image/png"));
+      zip.file(`${cnt.u.empNo || ""}_${cnt.u.name}_${pay.month}.png`.replace(/[\\/:*?"<>|]/g, ""), blob);
+    }
+    const out = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(out);
+    downloadUrl(url, `薪資條_${pay.month}.zip`);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast(`已下載 ${rows.length} 張薪資條`);
+  } catch (err) { appAlert("下載失敗", errMsg(err)); }
+  finally { btn.disabled = false; btn.textContent = "下載薪資條"; }
+};
 async function saveMpConf(status, issues) {
   await setDoc(doc(db, "payConfirm", `${mp.month}_${me.id}`), { empId: me.id, name: me.name, month: mp.month, status, issues, note: "", at: serverTimestamp() });
 }
