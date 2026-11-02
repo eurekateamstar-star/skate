@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=63";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=64";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -121,6 +121,9 @@ addEventListener("resize", () => {
   if (v === "view-shifts") renderShiftList();
   if (v === "view-payroll" && pay.tab === "rates") renderRates();
 });
+
+// 班別依上班時間排序（沒設時間的放最後）
+const byTime = ids => [...(ids || [])].sort((a, b) => (shiftMap[a]?.start || "99:99").localeCompare(shiftMap[b]?.start || "99:99") || (shiftMap[a]?.end || "").localeCompare(shiftMap[b]?.end || ""));
 
 /* ================= 狀態 ================= */
 let me = null;          // 目前登入的員工 {id, name, empNo, role, ...}
@@ -1081,7 +1084,7 @@ async function loadRecords() {
   rec.recs = attSnap.docs.map(toRec);
   rec.sch = {};
   rec.leave = {};
-  schSnap.forEach(d => { rec.sch[d.data().date] = d.data().shiftIds || []; rec.leave[d.data().date] = d.data().leave || {}; });
+  schSnap.forEach(d => { rec.sch[d.data().date] = byTime(d.data().shiftIds); rec.leave[d.data().date] = d.data().leave || {}; });
   try {
     localStorage.setItem(REC_KEY, JSON.stringify({ uid: me.id, month, sch: rec.sch, leave: rec.leave,
       recs: rec.recs.map(r => ({ type: r.type, shiftId: r.shiftId || null, shiftName: r.shiftName || "", date: r.date, t: +r.t, outOfRange: !!r.outOfRange, reason: r.reason || "", dist: r.dist ?? null, lat: r.lat ?? null, lng: r.lng ?? null, makeup: !!r.makeup })) }));
@@ -1139,7 +1142,7 @@ function renderRecDay() {
   const ds = rec.sel;
   const d = new Date(ds + "T00:00:00");
   $("#recDayTitle").textContent = `${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
-  const ids = (rec.sch[ds] || []).filter(id => shiftMap[id]);
+  const ids = byTime((rec.sch[ds] || []).filter(id => shiftMap[id]));
   const used = new Set();
   let html = ids.map(id => {
     const st = shiftPunchState(ds, id, rec.recs);
@@ -1206,7 +1209,7 @@ async function loadMySchedule() {
 
   // 我的月曆 + 週明細
   mySch = {};
-  snap.forEach(d => mySch[d.data().date] = d.data().shiftIds || []);
+  snap.forEach(d => mySch[d.data().date] = byTime(d.data().shiftIds));
   const days = daysOfMonth(month);
   if (!mySel || mySel.slice(0, 7) !== month) {
     const t = ymd(new Date());
@@ -1230,7 +1233,7 @@ function renderMyCal(month) {
   html += "<div></div>".repeat(days[0].getDay());
   for (const d of days) {
     const ds = ymd(d);
-    const ids = mySch[ds] || [];
+    const ids = byTime(mySch[ds]);
     const inWeek = ymd(weekStart(ds)) === ws;
     html += `<div class="day ${ds === today ? "today" : ""} ${d.getDay() % 6 === 0 ? "wkend" : ""} ${inWeek ? "in-week" : ""} ${ds === mySel ? "sel" : ""}" data-ds="${ds}">
       <div class="d">${d.getDate()}</div>
@@ -1251,7 +1254,7 @@ function renderWeek() {
   let n = 0, mins = 0;
   $("#weekList").innerHTML = list.map(d => {
     const ds = ymd(d);
-    const ids = mySch[ds] || [];
+    const ids = byTime(mySch[ds]);
     const other = ds.slice(0, 7) !== $("#mySchMonth").value;
     ids.forEach(id => { const s = shiftMap[id]; if (s?.start && s?.end) { n++; const [a, b] = [s.start, s.end].map(t => +t.slice(0, 2) * 60 + +t.slice(3)); mins += Math.max(0, b - a); } });
     const items = ids.map(id => {
@@ -1284,7 +1287,7 @@ function renderTeam(month, pub) {
   const days = daysOfMonth(month);
   const today = ymd(new Date());
   const wk = d => (d.getDay() === 0 || d.getDay() === 6) ? "wkend" : "";
-  const cellIds = (eid, ds) => (pub.grid?.[eid]?.[ds]) || [];
+  const cellIds = (eid, ds) => byTime(pub.grid?.[eid]?.[ds]);
   // 電腦：表格
   let html = `<thead><tr><th class="name">姓名</th>${days.map(d =>
     `<th class="${wk(d)}"${ymd(d) === today ? ' style="color:var(--primary)"' : ""}>${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）</th>`).join("")}</tr></thead><tbody>`;
@@ -1925,7 +1928,7 @@ $("#leaveDefaultBtn").onclick = async () => {
 let selShift = null;
 let schedMap = {}; // `${empId}_${date}` -> shiftIds
 let schedLeave = {}; // `${empId}_${date}` -> { shiftId: 假別 }
-const cellChips = key => (schedMap[key] || []).map(id => schedLeave[key]?.[id]
+const cellChips = key => byTime(schedMap[key]).map(id => schedLeave[key]?.[id]
   ? chipHtml(id, true).replace('class="chip"', `class="chip lv" title="已請假：${esc(schedLeave[key][id])}"`) : chipHtml(id, true)).join("");
 let roster = {};   // 當月班表設定
 
@@ -2286,7 +2289,7 @@ function renderDay() {
   const ids = schedMap[dp.key] || [];
   const { wd, rec, topWho, score, mine, mineAll } = analyze(dp.empId, dp.ds);
   const W = `週${WEEK[wd]}`;
-  $("#dpCurrent").innerHTML = ids.map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
+  $("#dpCurrent").innerHTML = byTime(ids).map(id => chipHtml(id, true)).join("") || `<span class="dr-empty">尚未排班</span>`;
 
   const workNow = workIds(ids, schedLeave[dp.key]);
   const recF = rec.filter(r => !ids.includes(r.id) && shiftMap[r.id] && !clashWith(r.id, workNow)).slice(0, 8);
