@@ -19,9 +19,9 @@
  */
 
 export default {
-  // 排程（Cron Trigger，每 5 分鐘）：上下班提醒、補打卡通知管理者
+  // 排程（Cron Trigger，每天台灣時間 08:00）：還沒審核的申請彙整一則給管理者
   async scheduled(event, env, ctx) {
-    if (env.LINE_MESSAGING_TOKEN) ctx.waitUntil(runReminders(env).catch(e => console.error("reminder", e)));
+    if (env.LINE_MESSAGING_TOKEN) ctx.waitUntil(runReminders(env, false, true).catch(e => console.error("reminder", e)));
   },
   async fetch(req, env, ctx) {
     const cors = {
@@ -49,6 +49,15 @@ export default {
     if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
     const path = new URL(req.url).pathname;
+    // 員工送出請假／加入班表 → 立刻通知管理者（只會通知一次）
+    if (path === "/notify") {
+      try {
+        const body = await req.json().catch(() => ({}));
+        if (!["leaveRequests", "shiftRequests"].includes(body.coll) || !/^[A-Za-z0-9]{10,40}$/.test(body.id || "")) return json({ error: "bad_request" }, 400);
+        if (!env.LINE_MESSAGING_TOKEN) return json({ ok: false, reason: "no_token" });
+        return json(await notifyNew(env, body.coll, body.id));
+      } catch (e) { return json({ error: String(e?.message || e) }, 500); }
+    }
     try {
       const body = await req.json().catch(() => ({}));
       const line = await verifyLine(body.idToken, env);
@@ -397,16 +406,30 @@ async function loadPlan(fs, today, force) {
   return { doc, plan };
 }
 
+async function notifyNew(env, coll, id) {
+  const fs = new Firestore(env);
+  const q = await fs.getPath(`${coll}/${id}`);
+  if (!q || q.status !== "pending" || q.notified === true) return { ok: true, skipped: true };
+  await fs.patchPath(`${coll}/${id}`, { notified: true });          // 先標記，避免重複發送
+  const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
+  const msg = coll === "leaveRequests"
+    ? card("📝 新的請假申請", `${q.name}　${String(q.date).slice(5)} ${q.leaveType}`, `${(q.shiftNames || []).join("、")}${q.reason ? `\n原因：${q.reason}` : ""}${q.subName ? `\n代班：${q.subName}` : ""}`, "前往審核", `${LIFF}?view=approvals`)
+    : card("➕ 申請加入班表", `${q.name}　${String(q.date).slice(5)}`, `${q.shiftName}\n（班表沒排到，已先打卡）`, "前往審核", `${LIFF}?view=approvals`, "#ff9500");
+  const admins = (await fs.where("employees", "role", "admin")).filter(e => e.active !== false && String(e.lineUid || "").startsWith("line:"));
+  for (const a of admins) await push(env, a.lineUid.slice(5), msg).catch(() => {});
+  return { ok: true, sent: admins.length };
+}
+
 // LINE 免費方案每月訊息有限，預設只通知管理者
 const NOTIFY = {
-  leaveToAdmin: true,       // 新的請假、加入班表申請 → 立即通知管理者
+  leaveToAdmin: false,      // 改由員工送出時直接呼叫 /notify 即時通知（不用排程搜尋）
   dailyDigest: true,        // 每天早上 8:00：還沒審核的補打卡（及仍未處理的請假／加班）→ 一則彙整給管理者（都處理完就不發）
   shiftReminders: false,    // 上下班前後提醒員工（很耗訊息量，預設關閉）
   employeeResults: false    // 審核結果、薪資發布、代班 → 通知員工（員工打開系統會跳出，預設不發 LINE）
 };
 const DIGEST_AT = 8 * 60;   // 08:00
 
-async function runReminders(env, manual = false) {
+async function runReminders(env, manual = false, daily = false) {
   const tp = new Date(Date.now() + 8 * 3600e3);          // 台灣時間
   const today = tp.toISOString().slice(0, 10);
   const now = tp.getUTCHours() * 60 + tp.getUTCMinutes();
@@ -475,7 +498,7 @@ async function runReminders(env, manual = false) {
   }
 
   // 3. 每天早上 8:00 彙整還沒審核的申請（已經處理完就不發）
-  if (NOTIFY.dailyDigest && (manual || inWin(DIGEST_AT, 0))) {
+  if (NOTIFY.dailyDigest && (manual || daily || inWin(DIGEST_AT, 0))) {
     const mark = (await fs.getPath(`reminders/${today}`)) || {};
     if (!mark.digestSent || manual) {
       const [p, sh, l] = await Promise.all([fs.where("punchRequests", "status", "pending"), fs.where("shiftRequests", "status", "pending"), fs.where("leaveRequests", "status", "pending")]);

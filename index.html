@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=53">
+  <link rel="stylesheet" href="style.css?v=54">
 </head>
 <body>
 
@@ -397,21 +397,15 @@
 
       <!-- 員工管理 -->
       <section id="view-employees" class="view hidden">
-        <div class="view-head"><h2>員工管理</h2></div>
-        <div class="card">
-          <h3>新增員工</h3>
-          <form id="empForm" class="form-row">
-            <input id="eNo" placeholder="員編" size="8">
-            <input id="eName" placeholder="姓名" required size="10">
-            <input id="eEmail" type="email" placeholder="Email（綁定驗證用）" required>
-            <select id="eRole">
-              <option value="employee">員工</option>
-              <option value="admin">管理者</option>
-            </select>
-            <button class="btn primary">新增</button>
-          </form>
-          <p class="hint">員工第一次用 LINE 登入時，點選自己的名字並輸入這裡的 Email 即完成綁定。Email 輸錯 5 次會鎖定，按「解除綁定」可重設。</p>
+        <div class="view-head">
+          <div class="vh-title"><h2>員工管理</h2><div class="vh-sub" id="empSub">點員工可修改資料、權限、解除 LINE 綁定</div></div>
+          <div class="vh-actions"><button class="btn primary" id="empAddBtn">＋ 新增員工</button></div>
         </div>
+        <div class="emp-tools">
+          <input id="empSearch" placeholder="搜尋姓名、員編、Email">
+          <div class="seg" id="empFilter"><button data-v="" class="on">全部</button><button data-v="unbound">未綁定</button><button data-v="admin">管理者</button><button data-v="off">停用</button></div>
+        </div>
+        <div class="card emp-card-list" id="empList"></div>
         <details class="card">
           <summary><h3>批次匯入員工</h3></summary>
           <textarea id="importText" rows="6" placeholder="每行一位：員編,姓名,Email,到職日,權限&#10;例：W002,蔡宛如,george52069@gmail.com,2025-08-31&#10;權限可留空（預設員工），填 admin 為管理者"></textarea>
@@ -420,12 +414,7 @@
             <span class="hint" style="margin:0">Email 已存在的會更新資料；可用逗號或 Tab 分隔（可直接從 Excel 複製）。</span>
           </div>
         </details>
-        <div class="card">
-          <table class="tbl">
-            <thead><tr><th>員編</th><th>姓名</th><th>Email</th><th>權限</th><th>LINE 綁定</th><th>狀態</th><th></th></tr></thead>
-            <tbody id="empList"></tbody>
-          </table>
-        </div>
+        <p class="hint">員工第一次用 LINE 登入時，點自己的名字並輸入這裡的 Email 就完成綁定。Email 輸錯 5 次會鎖定，按「解除綁定」可重設。</p>
       </section>
 
       <!-- 班別設定 -->
@@ -637,6 +626,24 @@
 <div id="toast"></div>
 
 <!-- App 風格對話框 -->
+<!-- 員工資料 -->
+<div class="modal-mask hidden" id="empModal">
+  <div class="modal small-modal">
+    <div class="modal-head"><button class="btn link" data-close>取消</button><h3 id="emTitle">員工資料</h3><button class="btn link strong" id="emSave">儲存</button></div>
+    <div class="modal-body">
+      <div class="em-head" id="emHead"></div>
+      <div class="group">
+        <div class="field"><label>姓名</label><input id="emName" placeholder="姓名"></div>
+        <div class="field"><label>員編（只有後台看得到）</label><input id="emNo" placeholder="例：W002"></div>
+        <div class="field"><label>Email（員工綁定 LINE 時要輸入）</label><input id="emEmail" type="email" placeholder="name@example.com"></div>
+        <div class="field"><label>權限</label><div class="seg wide" id="emRole"><button data-v="employee">員工</button><button data-v="admin">管理者</button></div></div>
+        <div class="field"><label>狀態</label><div class="seg wide" id="emActive"><button data-v="1">在職</button><button data-v="0">停用</button></div></div>
+      </div>
+      <div class="group em-line" id="emLine"></div>
+      <button class="btn danger em-del" id="emDel">刪除這位員工</button>
+    </div>
+  </div>
+</div>
 <!-- 申請其他班別打卡 -->
 <div class="modal-mask hidden" id="otherModal">
   <div class="modal small-modal">
@@ -679,6 +686,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=53"></script>
+<script type="module" src="app.js?v=54"></script>
 </body>
 </html>

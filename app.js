@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=53";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=54";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -103,6 +103,11 @@ function dayLabel(dateStr) {
 function errMsg(err) {
   const map = { "permission-denied": "權限不足", "unavailable": "網路連線異常", "resource-exhausted": "Firebase 今日免費讀取額度已用完（台灣時間下午 4 點後恢復）" };
   return map[err.code] || err.message;
+}
+
+// 送出請假／加入班表後，請 Worker 立刻用 LINE 通知管理者（失敗也沒關係，早上 8:00 會再彙整）
+function notifyAdmins(coll, id) {
+  fetch(WORKER_URL + "/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ coll, id }), keepalive: true }).catch(() => {});
 }
 
 /* ================= 狀態 ================= */
@@ -832,6 +837,7 @@ $("#otherModal").onclick = async e => {
     const data = { empId: me.id, name: me.name, empNo: me.empNo || "", date: today, month: today.slice(0, 7), shiftId: s.id, shiftName: s.name,
       status: "pending", notified: false, createdAt: serverTimestamp() };
     const ref = await addDoc(collection(db, "shiftRequests"), data);
+    notifyAdmins("shiftRequests", ref.id);
     myShiftReqs.push({ id: ref.id, ...data });
     calcExtra(); renderPunchCards(); updateClockMap();
     closeOther();
@@ -1310,88 +1316,96 @@ async function syncStaff() {
   if (JSON.stringify(d.exists() ? d.data().list : null) !== JSON.stringify(list)) await setDoc(doc(db, "meta", "staff"), { list, updatedAt: serverTimestamp() });
   staff = list;
 }
+let empF = "";
 async function loadEmployeesView() {
   await loadEmployees();
   syncStaff().catch(() => {});
-  $("#empList").innerHTML = employees.map(u => {
-    const locked = (u.bindFails || 0) >= 5;
-    const lineCell = u.lineUid
-      ? `<span class="line-cell">${u.linePicture ? `<img class="avatar" src="${esc(u.linePicture)}" alt="">` : ""}${esc(u.lineName || "已綁定")}</span>`
-      : locked ? `<span class="tag bad">已鎖定</span>` : `<span class="tag">未綁定</span>`;
-    return `
-    <tr data-id="${u.id}">
-      <td><input class="e-no" value="${esc(u.empNo)}" size="6"></td>
-      <td><input class="e-name" value="${esc(u.name)}" size="8"></td>
-      <td><input class="e-email" type="email" value="${esc(u.email)}" size="20"></td>
-      <td><select class="e-role">
-        <option value="employee" ${u.role !== "admin" ? "selected" : ""}>員工</option>
-        <option value="admin" ${u.role === "admin" ? "selected" : ""}>管理者</option>
-      </select></td>
-      <td>${lineCell}</td>
-      <td><select class="e-active">
-        <option value="1" ${u.active !== false ? "selected" : ""}>在職</option>
-        <option value="0" ${u.active === false ? "selected" : ""}>停用</option>
-      </select></td>
-      <td>
-        <button class="btn small primary e-save">儲存</button>
-        ${u.lineUid || locked ? `<button class="btn small e-unbind">解除綁定</button>` : ""}
-        ${u.id !== me.id ? `<button class="btn small danger e-del">刪除</button>` : ""}
-      </td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="7" class="empty">尚無員工</td></tr>`;
+  renderEmpList();
 }
+const empBound = u => !!u.lineUid, empLocked = u => !u.lineUid && (u.bindFails || 0) >= 5;
+function renderEmpList() {
+  const q = $("#empSearch").value.trim().toLowerCase();
+  const list = employees.filter(u => (!q || `${u.name} ${u.empNo} ${u.email}`.toLowerCase().includes(q))
+    && (empF === "" || (empF === "unbound" && !empBound(u) && u.active !== false) || (empF === "admin" && u.role === "admin") || (empF === "off" && u.active === false)));
+  const act = employees.filter(u => u.active !== false);
+  $("#empSub").textContent = `在職 ${act.length} 人・已綁定 LINE ${act.filter(empBound).length} 人・未綁定 ${act.filter(u => !empBound(u)).length} 人`;
+  const colors = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff", "#ac8e68"];
+  $("#empList").innerHTML = list.map(u => {
+    const ini = (u.name || "?").slice(-2);
+    const col = colors[[...String(u.name || u.id)].reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length];
+    const tags = [
+      u.role === "admin" ? `<span class="tag blue">管理者</span>` : "",
+      u.active === false ? `<span class="tag muted">停用</span>` : "",
+      empBound(u) ? `<span class="tag ok">LINE 已綁定</span>` : empLocked(u) ? `<span class="tag bad">綁定已鎖定</span>` : `<span class="tag muted">未綁定</span>`
+    ].join("");
+    return `<button class="emr-row ${u.active === false ? "off" : ""}" data-id="${u.id}">
+      ${u.linePicture ? `<img class="emp-av" src="${esc(u.linePicture)}" alt="">` : `<span class="emp-av" style="background:${col}">${esc(ini)}</span>`}
+      <span class="emp-main"><b>${esc(u.name || "（未命名）")}</b><small>${esc([u.empNo, u.email].filter(Boolean).join("・"))}</small></span>
+      <span class="emp-tags">${tags}</span><span class="chev-r">›</span></button>`;
+  }).join("") || `<p class="empty" style="padding:20px">沒有符合的員工</p>`;
+}
+$("#empSearch").oninput = renderEmpList;
+$("#empFilter").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; empF = b.dataset.v; setSeg("#empFilter", empF); renderEmpList(); };
 
-$("#empForm").onsubmit = async e => {
-  e.preventDefault();
-  const data = {
-    empNo: $("#eNo").value.trim(),
-    name: $("#eName").value.trim(),
-    email: $("#eEmail").value.trim().toLowerCase(),
-    role: $("#eRole").value,
-    active: true, lineUid: null, lineName: "", linePicture: "", bindFails: 0,
-    createdAt: serverTimestamp()
-  };
-  if (!data.name || !data.email) return;
-  if (employees.some(x => (x.email || "").toLowerCase() === data.email)) return toast("此 Email 已有員工使用");
+let em = null;
+function openEmp(u) {
+  em = { u };
+  const isNew = !u;
+  $("#emTitle").textContent = isNew ? "新增員工" : "員工資料";
+  $("#emName").value = u?.name || ""; $("#emNo").value = u?.empNo || ""; $("#emEmail").value = u?.email || "";
+  setSeg("#emRole", u?.role === "admin" ? "admin" : "employee");
+  setSeg("#emActive", u?.active === false ? "0" : "1");
+  $("#emHead").innerHTML = isNew ? "" : `${u.linePicture ? `<img class="emp-av big" src="${esc(u.linePicture)}" alt="">` : ""}<b>${esc(u.name || "")}</b>`;
+  $("#emHead").classList.toggle("hidden", isNew);
+  $("#emLine").innerHTML = isNew ? `<p class="hint" style="margin:0">新增後，請員工用 LINE 打開系統、點自己的名字並輸入上面的 Email 完成綁定。</p>`
+    : empBound(u) ? `<div class="em-line-row"><span>LINE 綁定</span><b>${esc(u.lineName || "已綁定")}</b><button class="btn small" id="emUnbind">解除綁定</button></div><p class="hint" style="margin:6px 0 0">換手機或換 LINE 帳號時解除，員工重新登入再綁定一次。</p>`
+    : empLocked(u) ? `<div class="em-line-row"><span>LINE 綁定</span><b class="red">Email 輸錯 5 次已鎖定</b><button class="btn small" id="emUnbind">重設</button></div>`
+    : `<div class="em-line-row"><span>LINE 綁定</span><b class="muted">尚未綁定</b></div>`;
+  $("#emDel").classList.toggle("hidden", isNew || u.id === me.id);
+  $("#empModal").classList.remove("hidden");
+  requestAnimationFrame(() => $("#empModal").classList.add("open"));
+}
+function closeEmp() { $("#empModal").classList.remove("open"); setTimeout(() => $("#empModal").classList.add("hidden"), 200); }
+$("#empAddBtn").onclick = () => openEmp(null);
+$("#empList").onclick = e => { const r = e.target.closest(".emr-row"); if (r) openEmp(employees.find(x => x.id === r.dataset.id)); };
+$("#emRole").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) setSeg("#emRole", b.dataset.v); };
+$("#emActive").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) setSeg("#emActive", b.dataset.v); };
+$("#empModal").onclick = async e => {
+  if (e.target.id === "empModal" || e.target.closest("[data-close]")) return closeEmp();
+  const u = em?.u;
   try {
-    await addDoc(collection(db, "employees"), data);
-    e.target.reset();
-    toast("已新增員工");
-    loadEmployeesView();
-  } catch (err) { toast("新增失敗：" + errMsg(err)); }
-};
-
-$("#empList").onclick = async e => {
-  const tr = e.target.closest("tr");
-  if (!tr) return;
-  const id = tr.dataset.id;
-  const emp = employees.find(x => x.id === id);
-  try {
-    if (e.target.classList.contains("e-save")) {
-      const data = {
-        empNo: $(".e-no", tr).value.trim(),
-        name: $(".e-name", tr).value.trim(),
-        email: $(".e-email", tr).value.trim().toLowerCase(),
-        role: $(".e-role", tr).value,
-        active: $(".e-active", tr).value === "1"
-      };
-      if (!data.name) return toast("姓名不可空白");
-      if (id === me.id && (data.role !== "admin" || !data.active)
-        && !(await appConfirm("變更自己的權限", "確定要取消自己的管理者權限或停用自己？之後將無法進入管理功能。", { okText: "確定變更", danger: true }))) return;
-      await updateDoc(doc(db, "employees", id), data);
-      toast("已儲存");
-    } else if (e.target.classList.contains("e-unbind")) {
-      if (!(await appConfirm("解除 LINE 綁定", `解除「${emp.name}」的 LINE 綁定？他下次登入需要重新綁定。`, { okText: "解除綁定", danger: true }))) return;
-      await updateDoc(doc(db, "employees", id), { lineUid: null, lineName: "", linePicture: "", bindFails: 0 });
-      toast("已解除綁定");
-      loadEmployeesView();
-    } else if (e.target.classList.contains("e-del")) {
-      if (!(await appConfirm("刪除員工", `刪除「${emp.name}」？打卡紀錄會保留。`, { okText: "刪除", danger: true }))) return;
-      await deleteDoc(doc(db, "employees", id));
-      toast("已刪除");
-      loadEmployeesView();
+    if (e.target.id === "emUnbind") {
+      if (!(await appConfirm("解除 LINE 綁定", `解除「${u.name}」的 LINE 綁定？他下次登入需要重新綁定。`, { okText: "解除綁定", danger: true }))) return;
+      await updateDoc(doc(db, "employees", u.id), { lineUid: null, lineName: "", linePicture: "", bindFails: 0 });
+      toast("已解除綁定"); closeEmp(); loadEmployeesView();
+    } else if (e.target.id === "emDel") {
+      if (!(await appConfirm("刪除員工", `刪除「${u.name}」？打卡紀錄會保留。\n（離職建議改成「停用」就好）`, { okText: "刪除", danger: true }))) return;
+      await deleteDoc(doc(db, "employees", u.id));
+      toast("已刪除"); closeEmp(); loadEmployeesView();
     }
   } catch (err) { toast("操作失敗：" + errMsg(err)); }
+};
+$("#emSave").onclick = async () => {
+  const u = em?.u;
+  const data = {
+    name: $("#emName").value.trim(), empNo: $("#emNo").value.trim(), email: $("#emEmail").value.trim().toLowerCase(),
+    role: $("#emRole button.on")?.dataset.v || "employee", active: $("#emActive button.on")?.dataset.v !== "0"
+  };
+  if (!data.name) return toast("請輸入姓名");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) return toast("請輸入正確的 Email");
+  if (employees.some(x => x.id !== u?.id && (x.email || "").toLowerCase() === data.email)) return toast("這個 Email 已經有其他員工使用");
+  try {
+    if (!u) {
+      await addDoc(collection(db, "employees"), { ...data, lineUid: null, lineName: "", linePicture: "", bindFails: 0, createdAt: serverTimestamp() });
+      toast("已新增員工");
+    } else {
+      if (u.id === me.id && (data.role !== "admin" || !data.active)
+        && !(await appConfirm("變更自己的權限", "確定要取消自己的管理者權限或停用自己？之後將無法進入管理功能。", { okText: "確定變更", danger: true }))) return;
+      await updateDoc(doc(db, "employees", u.id), data);
+      toast("已儲存");
+    }
+    closeEmp(); loadEmployeesView();
+  } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 };
 
 $("#importBtn").onclick = async () => {
@@ -2608,7 +2622,10 @@ $("#lvSubmit").onclick = async () => {
     const data = { date: lv.date, month: lv.date.slice(0, 7), shiftIds: ids, shiftNames: ids.map(id => shiftMap[id]?.name || ""),
       leaveType: type, reason, subNeed, subName, subs, subNames };
     if (editing) await updateDoc(doc(db, "leaveRequests", editing), { ...data, status: "pending", empId: me.id, updatedAt: serverTimestamp() });
-    else await addDoc(collection(db, "leaveRequests"), { empId: me.id, name: me.name, empNo: me.empNo || "", ...data, status: "pending", notified: false, createdAt: serverTimestamp() });
+    else {
+      const ref = await addDoc(collection(db, "leaveRequests"), { empId: me.id, name: me.name, empNo: me.empNo || "", ...data, status: "pending", notified: false, createdAt: serverTimestamp() });
+      notifyAdmins("leaveRequests", ref.id);
+    }
     resetLvForm();
     toast(editing ? "已更新請假申請" : "已送出請假申請，等待管理者審核");
     loadMyLeaves();
