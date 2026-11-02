@@ -387,6 +387,23 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .rate-tbl .rc .dot{display:inline-block;margin-right:6px;vertical-align:1px}
 .rate-tbl input{width:72px;height:30px;padding:0 6px;text-align:right;font-size:13px}
 
+/* ---------- 時間提示、補打卡 ---------- */
+.pc-hint{margin:10px 0 -2px;padding:8px 12px;border-radius:10px;font-size:13.5px;font-weight:500}
+.pc-hint.soon{background:var(--primary-l);color:var(--primary)}
+.pc-hint.late{background:var(--red-l);color:var(--red)}
+.small-modal{width:min(440px,100%)}
+.mk-title{font-size:15px;font-weight:600}
+.rd-row .btn.small{margin-left:auto;height:28px}
+.rd-row .tag{margin-left:auto}
+.req-card h3{display:flex;align-items:center;gap:8px}
+.req-card .count{color:var(--orange-d);font-weight:600}
+.req{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--sep-2)}
+.req-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:13.5px}
+.req-main b{font-size:15px}
+.req-main span{color:var(--muted)}
+.req-main .req-what{color:var(--text-2)}
+.req-acts{display:flex;gap:6px;flex-shrink:0}
+
 /* ---------- 打卡地點管理 ---------- */
 .radius-in{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px}
 .radius-in input{width:80px}

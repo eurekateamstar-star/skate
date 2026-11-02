@@ -8,3 +8,7 @@ keep_vars = true
 
 # 只部署 Worker，不上傳網站檔案
 workers_dev = true
+
+# 每 5 分鐘執行一次上下班提醒（台灣時間 05:00–23:55）
+[triggers]
+crons = ["*/5 21-23,0-15 * * *"]

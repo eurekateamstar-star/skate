@@ -45,6 +45,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 補打卡申請：員工只能用自己的身分送出（待審核），管理者審核
+    match /punchRequests/{id} {
+      allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
+      allow create: if bound()
+                    && request.resource.data.empId == myEmpId()
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.reason is string
+                    && request.resource.data.reason.size() >= 2;
+      allow update, delete: if isAdmin();
+    }
+
     // 薪資：只有管理者能讀寫
     match /payRates/{id} {
       allow read, write: if isAdmin();
@@ -94,7 +105,7 @@ service cloud.firestore {
                     && request.resource.data.ts == request.time
                     && locationOk(request.resource.data))
                     // 管理者匯入舊系統打卡紀錄
-                    || (isAdmin() && request.resource.data.imported == true);
+                    || (isAdmin() && (request.resource.data.imported == true || request.resource.data.makeup == true));
       // 管理者重新匯入同一筆（覆蓋）
       allow update: if isAdmin();
       allow delete: if isAdmin();

@@ -19,6 +19,10 @@
  */
 
 export default {
+  // 排程（Cron Trigger，每 5 分鐘）：上下班提醒、補打卡通知管理者
+  async scheduled(event, env, ctx) {
+    if (env.LINE_MESSAGING_TOKEN) ctx.waitUntil(runReminders(env).catch(e => console.error("reminder", e)));
+  },
   async fetch(req, env, ctx) {
     const cors = {
       "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
@@ -34,6 +38,12 @@ export default {
       if (!env.SETUP_KEY || key !== env.SETUP_KEY) return json({ error: "請在網址加上正確的 ?key=（Worker 變數 SETUP_KEY）" }, 403);
       if (!env.LINE_MESSAGING_TOKEN) return json({ error: "尚未設定 Worker 變數 LINE_MESSAGING_TOKEN" }, 400);
       try { return json(await setupRichMenu(env)); }
+      catch (e) { return json({ error: String(e?.message || e) }, 500); }
+    }
+    // 手動測試提醒：/run-reminders?key=SETUP_KEY
+    if (req.method === "GET" && new URL(req.url).pathname === "/run-reminders") {
+      if (!env.SETUP_KEY || new URL(req.url).searchParams.get("key") !== env.SETUP_KEY) return json({ error: "key 錯誤" }, 403);
+      try { return json(await runReminders(env, true)); }
       catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
     if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -209,6 +219,32 @@ class Firestore {
     const hit = (res || []).find(x => x.document);
     return hit ? decode(hit.document) : null;
   }
+  async where(coll, field, value) {
+    const res = await this.req(`${this.base}:runQuery`, {
+      method: "POST",
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: coll }],
+        where: { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: { stringValue: value } } } } })
+    });
+    return (res || []).filter(x => x.document).map(x => decode(x.document));
+  }
+  async list(coll) {
+    const out = [];
+    let pageToken = "";
+    do {
+      const d = await this.req(`${this.base}/${coll}?pageSize=300${pageToken ? "&pageToken=" + pageToken : ""}`);
+      (d?.documents || []).forEach(doc => out.push(decode(doc)));
+      pageToken = d?.nextPageToken || "";
+    } while (pageToken);
+    return out;
+  }
+  async getPath(path) {
+    const d = await this.req(`${this.base}/${path}`);
+    return d ? decode(d) : null;
+  }
+  async patchPath(path, fields) {
+    const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent("`" + k + "`")}`).join("&");
+    return this.req(`${this.base}/${path}?${mask}`, { method: "PATCH", body: JSON.stringify({ fields: encodeFields(fields) }) });
+  }
   async patch(id, fields, updateTime) {
     const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${k}`).join("&");
     const pre = updateTime ? `&currentDocument.updateTime=${encodeURIComponent(updateTime)}` : "";
@@ -228,6 +264,7 @@ function decode(doc) {
     else if ("booleanValue" in v) o[k] = v.booleanValue;
     else if ("timestampValue" in v) o[k] = v.timestampValue;
     else if ("nullValue" in v) o[k] = null;
+    else if ("arrayValue" in v) o[k] = (v.arrayValue.values || []).map(x => x.stringValue ?? x.integerValue ?? x.doubleValue ?? null);
   }
   return o;
 }
@@ -313,4 +350,92 @@ async function linkMenuFor(env, userId, isAdmin) {
   } else {
     await lineApi(env, `/v2/bot/user/${userId}/richmenu`, { method: "DELETE" }).catch(() => {});
   }
+}
+
+/* ---------- 上下班提醒（LINE 推播） ---------- */
+const REMIND_BEFORE = 10;   // 上班前幾分鐘提醒
+const REMIND_AFTER = 10;    // 下班後幾分鐘仍未打卡就提醒
+let cacheShifts = null, cacheEmps = null, cacheAt = 0;
+
+async function runReminders(env, manual = false) {
+  const tp = new Date(Date.now() + 8 * 3600e3);          // 台灣時間
+  const today = tp.toISOString().slice(0, 10);
+  const now = tp.getUTCHours() * 60 + tp.getUTCMinutes();
+  const fs = new Firestore(env);
+  const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
+  const result = { date: today, time: `${String(Math.floor(now / 60)).padStart(2, "0")}:${String(now % 60).padStart(2, "0")}`, sent: [] };
+
+  if (!cacheShifts || Date.now() - cacheAt > 30 * 60e3) {
+    [cacheShifts, cacheEmps] = await Promise.all([fs.list("shiftTypes"), fs.list("employees")]);
+    cacheAt = Date.now();
+  }
+  const shiftBy = Object.fromEntries(cacheShifts.map(s => [s.id, s]));
+  const empBy = Object.fromEntries(cacheEmps.map(e => [e.id, e]));
+  const toMin = t => t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
+  const inWin = (t, a) => t != null && now >= t + a && now < t + a + 5;   // 每 5 分鐘一個時間窗
+
+  // 1. 找出這 5 分鐘需要提醒的班
+  const schedules = await fs.where("schedules", "date", today);
+  const cands = [];
+  for (const x of schedules) for (const sid of x.shiftIds || []) {
+    const s = shiftBy[sid];
+    if (!s || s.cat === "leave") continue;
+    if (inWin(toMin(s.start), -REMIND_BEFORE)) cands.push({ empId: x.empId, sid, s, type: "in" });
+    if (inWin(toMin(s.end), REMIND_AFTER)) cands.push({ empId: x.empId, sid, s, type: "out" });
+  }
+  if (cands.length) {
+    const att = await fs.where("attendance", "date", today);
+    const sentDoc = (await fs.getPath(`reminders/${today}`)) || {};
+    const mark = {};
+    for (const c of cands) {
+      const key = `${c.empId}_${c.sid}_${c.type}`;
+      if (sentDoc[key]) continue;
+      const punched = att.some(a => a.empId === c.empId && a.shiftId === c.sid && a.type === c.type);
+      if (punched) continue;
+      const e = empBy[c.empId];
+      if (!e || e.active === false || !String(e.lineUid || "").startsWith("line:")) continue;
+      const msg = c.type === "in"
+        ? card(`⏰ ${REMIND_BEFORE} 分鐘後上班`, c.s.name, `上班 ${c.s.start}・下班 ${c.s.end}\n到了記得打上班卡喔！`, "前往打卡", `${LIFF}?view=clock`)
+        : card("⚠️ 還沒打下班卡", c.s.name, `下班時間 ${c.s.end} 已過\n請立即打下班卡；超過 1 小時要改用「補打卡」`, "立即打卡", `${LIFF}?view=clock`, "#ff9500");
+      try {
+        await push(env, e.lineUid.slice(5), msg);
+        mark[key] = true;
+        result.sent.push(`${e.name} ${c.type === "in" ? "上班" : "下班"} ${c.s.name}`);
+      } catch (err) { result.sent.push(`失敗 ${e.name}: ${err.message}`); }
+    }
+    if (Object.keys(mark).length) await fs.patchPath(`reminders/${today}`, mark);
+  }
+
+  // 2. 新的補打卡申請 → 通知管理者
+  const pend = (await fs.where("punchRequests", "status", "pending")).filter(q => !q.notified);
+  if (pend.length) {
+    const admins = cacheEmps.filter(e => e.role === "admin" && e.active !== false && String(e.lineUid || "").startsWith("line:"));
+    const lines = pend.slice(0, 8).map(q => `${q.name}　${q.date.slice(5)} ${q.type === "in" ? "上班" : "下班"} ${q.time}`).join("\n");
+    const msg = card(`📝 ${pend.length} 筆補打卡待審核`, "補打卡申請", lines + (pend.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=report`, "#0071e3");
+    for (const a of admins) await push(env, a.lineUid.slice(5), msg).catch(() => {});
+    for (const q of pend) await fs.patchPath(`punchRequests/${q.id}`, { notified: true }).catch(() => {});
+    result.notifiedRequests = pend.length;
+  }
+  if (manual) result.candidates = cands.length;
+  return result;
+}
+
+function card(title, shift, detail, label, uri, color = "#0071e3") {
+  return {
+    type: "flex", altText: `${title}：${shift}`,
+    contents: {
+      type: "bubble", size: "kilo",
+      body: { type: "box", layout: "vertical", spacing: "sm", contents: [
+        { type: "text", text: title, weight: "bold", size: "md", color },
+        { type: "text", text: shift, weight: "bold", size: "lg", wrap: true, margin: "md" },
+        { type: "text", text: detail, size: "sm", color: "#86868b", wrap: true }
+      ] },
+      footer: { type: "box", layout: "vertical", contents: [
+        { type: "button", style: "primary", color, height: "sm", action: { type: "uri", label, uri } }
+      ] }
+    }
+  };
+}
+async function push(env, to, message) {
+  return lineApi(env, "/v2/bot/message/push", { method: "POST", body: JSON.stringify({ to, messages: [message] }) });
 }

@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=35">
+  <link rel="stylesheet" href="style.css?v=36">
 </head>
 <body>
 
@@ -243,6 +243,10 @@
             <input type="file" id="punchXlsx" accept=".xlsx,.xlsm,.xls,.csv" hidden>
             <button class="btn" id="csvBtn">匯出 CSV</button>
           </div>
+        </div>
+        <div class="card req-card hidden" id="reqCard">
+          <h3>補打卡申請 <span class="count" id="reqCount"></span></h3>
+          <div id="reqList"></div>
         </div>
         <div class="card rep-filter">
           <select id="repEmp"><option value="">全部員工</option></select>
@@ -483,6 +487,27 @@
     </div>
   </div>
 
+  <!-- 補打卡申請 -->
+  <div class="modal-mask hidden" id="makeupModal">
+    <div class="modal small-modal">
+      <div class="modal-head">
+        <button class="btn link" data-close>取消</button>
+        <h3>補打卡</h3>
+        <button class="btn link strong" id="mkSubmit">送出</button>
+      </div>
+      <div class="modal-body">
+        <div class="group">
+          <div class="field"><label>班別</label><div class="mk-title" id="mkTitle"></div></div>
+          <div class="field"><label>補哪一個卡</label>
+            <div class="seg wide" id="mkType"><button data-v="in">上班</button><button data-v="out">下班</button></div></div>
+          <div class="field"><label>實際時間</label><input type="time" id="mkTime"></div>
+          <div class="field"><label>原因</label><textarea id="mkReason" rows="3" placeholder="例：忘記打卡、手機沒電、在帶學生走不開"></textarea></div>
+        </div>
+        <p class="hint">送出後由管理者審核，核准後會自動補上打卡紀錄。</p>
+      </div>
+    </div>
+  </div>
+
   <!-- 班表設定 -->
   <div class="modal-mask hidden" id="rosterModal">
     <div class="modal">
@@ -556,6 +581,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=35"></script>
+<script type="module" src="app.js?v=36"></script>
 </body>
 </html>
