@@ -397,6 +397,15 @@ async function loadPlan(fs, today, force) {
   return { doc, plan };
 }
 
+// LINE 免費方案每月訊息有限，預設只通知管理者
+const NOTIFY = {
+  leaveToAdmin: true,       // 新的請假申請 → 立即通知管理者
+  dailyDigest: true,        // 每天早上 8:00：還沒審核的補打卡／加班／請假 → 一則彙整給管理者（都處理完就不發）
+  shiftReminders: false,    // 上下班前後提醒員工（很耗訊息量，預設關閉）
+  employeeResults: false    // 審核結果、薪資發布、代班 → 通知員工（員工打開系統會跳出，預設不發 LINE）
+};
+const DIGEST_AT = 8 * 60;   // 08:00
+
 async function runReminders(env, manual = false) {
   const tp = new Date(Date.now() + 8 * 3600e3);          // 台灣時間
   const today = tp.toISOString().slice(0, 10);
@@ -404,111 +413,130 @@ async function runReminders(env, manual = false) {
   const fs = new Firestore(env);
   const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
   const result = { date: today, time: `${String(Math.floor(now / 60)).padStart(2, "0")}:${String(now % 60).padStart(2, "0")}`, sent: [] };
-
-  const { doc: sentDoc, plan } = await loadPlan(fs, today, manual);
-  const empBy = Object.fromEntries(Object.entries(plan.emps).map(([id, e]) => [id, { id, name: e.name, lineUid: e.line ? "line:" + e.line : "", role: e.admin ? "admin" : "staff" }]));
   const toMin = t => t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
   const inWin = (t, a) => t != null && now >= t + a && now < t + a + 5;   // 每 5 分鐘一個時間窗
+  let adminsCache = null;
+  const getAdmins = async () => adminsCache ??= (await fs.where("employees", "role", "admin"))
+    .filter(e => e.active !== false && String(e.lineUid || "").startsWith("line:")).map(e => e.lineUid.slice(5));
+  const toAdmins = async msg => { const ids = await getAdmins(); for (const id of ids) await push(env, id, msg).catch(() => {}); return ids.length; };
 
-  // 1. 找出這 5 分鐘需要提醒的班
-  const cands = [];
-  for (const it of plan.items) {
-    const s = { name: it.n, start: it.st, end: it.en };
-    if (inWin(toMin(it.st), -REMIND_BEFORE)) cands.push({ empId: it.e, sid: it.s, s, type: "in" });
-    if (inWin(toMin(it.en), REMIND_AFTER)) cands.push({ empId: it.e, sid: it.s, s, type: "out" });
-  }
-  if (cands.length) {
-    const mark = {};
-    const schCache = {}, attCache = {};
-    for (const c of cands) {
-      const key = `${c.empId}_${c.sid}_${c.type}`;
-      if (sentDoc[key]) continue;
-      const e = empBy[c.empId];
-      if (!e || !e.lineUid) continue;
-      // 再確認一次：班還在、沒請假、還沒打卡
-      const sch = schCache[c.empId] ??= await fs.getPath(`schedules/${c.empId}_${today}`);
-      if (!sch || !(sch.shiftIds || []).includes(c.sid) || sch.leave?.[c.sid]) continue;
-      const att = attCache[c.empId] ??= await fs.whereAnd("attendance", { empId: c.empId, date: today });
-      if (att.some(a => a.shiftId === c.sid && a.type === c.type)) continue;
-      const msg = c.type === "in"
-        ? card(`⏰ ${REMIND_BEFORE} 分鐘後上班`, c.s.name, `上班 ${c.s.start}・下班 ${c.s.end}\n到了記得打上班卡喔！`, "前往打卡", `${LIFF}?view=clock`)
-        : card("⚠️ 還沒打下班卡", c.s.name, `下班時間 ${c.s.end} 已過\n請立即打下班卡；超過 1 小時要改用「補打卡」`, "立即打卡", `${LIFF}?view=clock`, "#ff9500");
-      try {
-        await push(env, e.lineUid.slice(5), msg);
-        mark[key] = true;
-        result.sent.push(`${e.name} ${c.type === "in" ? "上班" : "下班"} ${c.s.name}`);
-      } catch (err) { result.sent.push(`失敗 ${e.name}: ${err.message}`); }
+  // 1. 上下班提醒（預設關閉）
+  let cands = [];
+  if (NOTIFY.shiftReminders) {
+    const { doc: sentDoc, plan } = await loadPlan(fs, today, manual);
+    const empBy = Object.fromEntries(Object.entries(plan.emps).map(([id, e]) => [id, { id, name: e.name, lineUid: e.line ? "line:" + e.line : "" }]));
+    cands = [];
+    for (const it of plan.items) {
+      const s = { name: it.n, start: it.st, end: it.en };
+      if (inWin(toMin(it.st), -REMIND_BEFORE)) cands.push({ empId: it.e, sid: it.s, s, type: "in" });
+      if (inWin(toMin(it.en), REMIND_AFTER)) cands.push({ empId: it.e, sid: it.s, s, type: "out" });
     }
-    if (Object.keys(mark).length) await fs.patchPath(`reminders/${today}`, mark);
-  }
-
-  // 2. 新的請假／補打卡申請 → 通知管理者
-  // 只查還沒通知過的（notified == false），沒有就只算 1 次讀取
-  const [pendP, pendL, pendS] = await Promise.all([fs.whereAnd("punchRequests", { notified: false }), fs.whereAnd("leaveRequests", { notified: false }), fs.whereAnd("shiftRequests", { notified: false })]);
-  const newP = pendP.filter(q => q.status === "pending"), newL = pendL.filter(q => q.status === "pending"), newS = pendS.filter(q => q.status === "pending");
-  if (newP.length || newL.length || newS.length) {
-    const admins = Object.values(empBy).filter(e => e.role === "admin" && e.lineUid);
-    const lines = [
-      ...newL.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}（${(q.shiftNames || []).length} 個班）`),
-      ...newP.map(q => `⏱ ${q.name}　${q.date.slice(5)} 補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`),
-      ...newS.map(q => `➕ ${q.name}　${q.date.slice(5)} 加班 ${q.shiftName}`)
-    ];
-    const title = [newL.length ? `${newL.length} 筆請假` : "", newP.length ? `${newP.length} 筆補打卡` : "", newS.length ? `${newS.length} 筆加班` : ""].filter(Boolean).join("、");
-    const msg = card(`📝 ${title}待審核`, "簽核中心", lines.slice(0, 8).join("\n") + (lines.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=approvals`);
-    for (const a of admins) await push(env, a.lineUid.slice(5), msg).catch(() => {});
-
-    result.notifiedAdmins = newP.length + newL.length + newS.length;
-  }
-  for (const q of pendP) await fs.patchPath(`punchRequests/${q.id}`, { notified: true }).catch(() => {});
-  for (const q of pendL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
-  for (const q of pendS) await fs.patchPath(`shiftRequests/${q.id}`, { notified: true }).catch(() => {});
-
-  // 3. 審核結果 → 通知員工
-  const [doneP, doneL, doneS, doneSh] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo"), fs.where("payslips", "notifyEmp", "todo"), fs.where("shiftRequests", "notifyEmp", "todo")]);
-  // 加班申請結果 → 通知員工
-  for (const q of doneSh) {
-    const e = empBy[q.empId];
-    if (e?.lineUid) {
-      const ok = q.status === "approved";
-      await push(env, e.lineUid.slice(5), card(ok ? "✅ 加班已核准" : "❌ 加班被退回", q.shiftName || "加班申請",
-        `${q.date.slice(5)} ${q.shiftName || ""}${ok ? "\n已加入你的班表" : q.rejectNote ? `\n退回原因：${q.rejectNote}` : ""}`, "查看", `${LIFF}?view=clock`, ok ? "#34c759" : "#ff3b30")).catch(() => {});
+    if (cands.length) {
+      const mark = {};
+      const schCache = {}, attCache = {};
+      for (const c of cands) {
+        const key = `${c.empId}_${c.sid}_${c.type}`;
+        if (sentDoc[key]) continue;
+        const e = empBy[c.empId];
+        if (!e || !e.lineUid) continue;
+        // 再確認一次：班還在、沒請假、還沒打卡
+        const sch = schCache[c.empId] ??= await fs.getPath(`schedules/${c.empId}_${today}`);
+        if (!sch || !(sch.shiftIds || []).includes(c.sid) || sch.leave?.[c.sid]) continue;
+        const att = attCache[c.empId] ??= await fs.whereAnd("attendance", { empId: c.empId, date: today });
+        if (att.some(a => a.shiftId === c.sid && a.type === c.type)) continue;
+        const msg = c.type === "in"
+          ? card(`⏰ ${REMIND_BEFORE} 分鐘後上班`, c.s.name, `上班 ${c.s.start}・下班 ${c.s.end}\n到了記得打上班卡喔！`, "前往打卡", `${LIFF}?view=clock`)
+          : card("⚠️ 還沒打下班卡", c.s.name, `下班時間 ${c.s.end} 已過\n請立即打下班卡；超過 1 小時要改用「補打卡」`, "立即打卡", `${LIFF}?view=clock`, "#ff9500");
+        try {
+          await push(env, e.lineUid.slice(5), msg);
+          mark[key] = true;
+          result.sent.push(`${e.name} ${c.type === "in" ? "上班" : "下班"} ${c.s.name}`);
+        } catch (err) { result.sent.push(`失敗 ${e.name}: ${err.message}`); }
+      }
+      if (Object.keys(mark).length) await fs.patchPath(`reminders/${today}`, mark);
     }
-    await fs.patchPath(`shiftRequests/${q.id}`, { notifyEmp: "done" }).catch(() => {});
+
   }
-  // 薪資發布 → 通知員工
-  for (const q of doneS) {
-    const e = empBy[q.empId];
-    if (e?.lineUid) {
-      const [y, m] = String(q.month || "").split("-");
-      await push(env, e.lineUid.slice(5), card(`💰 ${y}年${+m}月薪資已結算`, "我的薪資", `應發金額 $${Math.round(q.total || 0).toLocaleString("en-US")}\n點下方查看每個班別的明細`, "查看薪資", `${LIFF}?view=mypay`, "#34c759")).catch(() => {});
+
+  // 2. 新的請假申請 → 立即通知管理者
+  if (NOTIFY.leaveToAdmin) {
+    const pendL = await fs.whereAnd("leaveRequests", { notified: false });
+    const newL = pendL.filter(q => q.status === "pending");
+    if (newL.length) {
+      const lines = newL.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}（${(q.shiftNames || []).length} 個班）`);
+      result.notifiedAdmins = await toAdmins(card(`📝 ${newL.length} 筆請假待審核`, "簽核中心", lines.slice(0, 8).join("\n") + (lines.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=approvals`));
     }
-    await fs.patchPath(`payslips/${q.id}`, { notifyEmp: "done" }).catch(() => {});
+    for (const q of pendL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
   }
-  for (const [coll, list] of [["punchRequests", doneP], ["leaveRequests", doneL]]) {
-    for (const q of list) {
+
+  // 3. 每天早上 8:00 彙整還沒審核的申請（已經處理完就不發）
+  if (NOTIFY.dailyDigest && (manual || inWin(DIGEST_AT, 0))) {
+    const mark = (await fs.getPath(`reminders/${today}`)) || {};
+    if (!mark.digestSent || manual) {
+      const [p, sh, l] = await Promise.all([fs.where("punchRequests", "status", "pending"), fs.where("shiftRequests", "status", "pending"), fs.where("leaveRequests", "status", "pending")]);
+      if (p.length || sh.length || l.length) {
+        const lines = [
+          ...p.map(q => `⏱ ${q.name}　${q.date.slice(5)} 補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`),
+          ...sh.map(q => `➕ ${q.name}　${q.date.slice(5)} 加班 ${q.shiftName}`),
+          ...l.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}`)
+        ];
+        const title = [p.length ? `補打卡 ${p.length}` : "", sh.length ? `加班 ${sh.length}` : "", l.length ? `請假 ${l.length}` : ""].filter(Boolean).join("・");
+        result.digest = await toAdmins(card(`🌅 今日待審核：${title}`, "簽核中心", lines.slice(0, 10).join("\n") + (lines.length > 10 ? `\n…共 ${lines.length} 筆` : ""), "前往審核", `${LIFF}?view=approvals`));
+      }
+      if (!manual) await fs.patchPath(`reminders/${today}`, { digestSent: true });
+    }
+  }
+
+  // 4. 審核結果 → 通知員工（預設關閉）
+  if (NOTIFY.employeeResults) {
+    const emps = await fs.list("employees");
+    const empBy = Object.fromEntries(emps.map(e => [e.id, e]));
+    const [doneP, doneL, doneS, doneSh] = await Promise.all([fs.where("punchRequests", "notifyEmp", "todo"), fs.where("leaveRequests", "notifyEmp", "todo"), fs.where("payslips", "notifyEmp", "todo"), fs.where("shiftRequests", "notifyEmp", "todo")]);
+    // 加班申請結果 → 通知員工
+    for (const q of doneSh) {
       const e = empBy[q.empId];
-      if (e && String(e.lineUid || "").startsWith("line:")) {
+      if (e?.lineUid) {
         const ok = q.status === "approved";
-        const kind = q.status === "revoked" ? "revoked" : ok && q.notifyKind === "edited" ? "edited" : ok ? "approved" : "rejected";
-        const subs = Object.entries(q.subNames || {}).filter(([, n]) => n);
-        const subLine = coll === "leaveRequests" && ok ? `\n代班：${subs.length ? [...new Set(subs.map(([, n]) => n))].join("、") : "不需代班"}` : "";
-        const what = coll === "leaveRequests" ? `${q.date.slice(5)} ${q.leaveType}\n${(q.shiftNames || []).join("、")}${subLine}` : `${q.date.slice(5)} ${q.shiftName}\n補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`;
-        const head = { approved: "✅ 已核准", edited: "✏️ 已修改", revoked: "↩️ 已撤銷", rejected: "❌ 已退回" }[kind];
-        const msg = card(head, coll === "leaveRequests" ? "請假申請" : "補打卡申請",
-          what + (kind === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "") + (kind === "revoked" ? "\n請假已取消，請照原班表上班" : ""),
-          "查看", `${LIFF}?view=${coll === "leaveRequests" ? "leave" : "records"}`, kind === "rejected" ? "#ff3b30" : kind === "revoked" ? "#8e8e93" : "#34c759");
-        await push(env, e.lineUid.slice(5), msg).catch(() => {});
-        // 代班人也通知
-        if (coll === "leaveRequests" && (kind === "approved" || kind === "edited")) {
-          for (const [sid, eid] of Object.entries(q.subAdded || {})) {
-            const s = empBy[eid];
-            if (!s || !String(s.lineUid || "").startsWith("line:")) continue;
-            const idx = (q.shiftIds || []).indexOf(sid);
-            await push(env, s.lineUid.slice(5), card("🔁 代班通知", "排班異動", `${q.date.slice(5)} ${q.shiftNames?.[idx] || ""}\n代 ${q.name} 的班`, "查看班表", `${LIFF}?view=mySchedule`, "#ff9500")).catch(() => {});
+        await push(env, e.lineUid.slice(5), card(ok ? "✅ 加班已核准" : "❌ 加班被退回", q.shiftName || "加班申請",
+          `${q.date.slice(5)} ${q.shiftName || ""}${ok ? "\n已加入你的班表" : q.rejectNote ? `\n退回原因：${q.rejectNote}` : ""}`, "查看", `${LIFF}?view=clock`, ok ? "#34c759" : "#ff3b30")).catch(() => {});
+      }
+      await fs.patchPath(`shiftRequests/${q.id}`, { notifyEmp: "done" }).catch(() => {});
+    }
+    // 薪資發布 → 通知員工
+    for (const q of doneS) {
+      const e = empBy[q.empId];
+      if (e?.lineUid) {
+        const [y, m] = String(q.month || "").split("-");
+        await push(env, e.lineUid.slice(5), card(`💰 ${y}年${+m}月薪資已結算`, "我的薪資", `應發金額 $${Math.round(q.total || 0).toLocaleString("en-US")}\n點下方查看每個班別的明細`, "查看薪資", `${LIFF}?view=mypay`, "#34c759")).catch(() => {});
+      }
+      await fs.patchPath(`payslips/${q.id}`, { notifyEmp: "done" }).catch(() => {});
+    }
+    for (const [coll, list] of [["punchRequests", doneP], ["leaveRequests", doneL]]) {
+      for (const q of list) {
+        const e = empBy[q.empId];
+        if (e && String(e.lineUid || "").startsWith("line:")) {
+          const ok = q.status === "approved";
+          const kind = q.status === "revoked" ? "revoked" : ok && q.notifyKind === "edited" ? "edited" : ok ? "approved" : "rejected";
+          const subs = Object.entries(q.subNames || {}).filter(([, n]) => n);
+          const subLine = coll === "leaveRequests" && ok ? `\n代班：${subs.length ? [...new Set(subs.map(([, n]) => n))].join("、") : "不需代班"}` : "";
+          const what = coll === "leaveRequests" ? `${q.date.slice(5)} ${q.leaveType}\n${(q.shiftNames || []).join("、")}${subLine}` : `${q.date.slice(5)} ${q.shiftName}\n補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`;
+          const head = { approved: "✅ 已核准", edited: "✏️ 已修改", revoked: "↩️ 已撤銷", rejected: "❌ 已退回" }[kind];
+          const msg = card(head, coll === "leaveRequests" ? "請假申請" : "補打卡申請",
+            what + (kind === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "") + (kind === "revoked" ? "\n請假已取消，請照原班表上班" : ""),
+            "查看", `${LIFF}?view=${coll === "leaveRequests" ? "leave" : "records"}`, kind === "rejected" ? "#ff3b30" : kind === "revoked" ? "#8e8e93" : "#34c759");
+          await push(env, e.lineUid.slice(5), msg).catch(() => {});
+          // 代班人也通知
+          if (coll === "leaveRequests" && (kind === "approved" || kind === "edited")) {
+            for (const [sid, eid] of Object.entries(q.subAdded || {})) {
+              const s = empBy[eid];
+              if (!s || !String(s.lineUid || "").startsWith("line:")) continue;
+              const idx = (q.shiftIds || []).indexOf(sid);
+              await push(env, s.lineUid.slice(5), card("🔁 代班通知", "排班異動", `${q.date.slice(5)} ${q.shiftNames?.[idx] || ""}\n代 ${q.name} 的班`, "查看班表", `${LIFF}?view=mySchedule`, "#ff9500")).catch(() => {});
+            }
           }
         }
+        await fs.patchPath(`${coll}/${q.id}`, { notifyEmp: "done" }).catch(() => {});
       }
-      await fs.patchPath(`${coll}/${q.id}`, { notifyEmp: "done" }).catch(() => {});
     }
   }
   if (manual) result.candidates = cands.length;
