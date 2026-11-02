@@ -825,3 +825,8 @@ button,.tabbar a,.sidebar a,.sheet-grid a,.day-row,.check-item,.chip,.rec{-webki
 .ot-main small{font-size:12.5px;color:var(--muted)}
 .ot-main em{font-style:normal;color:var(--red)}
 .ot-add{color:var(--primary);font-weight:600;font-size:14px}
+/* 讀取中進度條 */
+.load-bar{position:fixed;top:0;left:0;right:0;height:3px;z-index:4000;pointer-events:none;opacity:0;transition:opacity .2s;overflow:hidden}
+.load-bar::after{content:"";position:absolute;top:0;bottom:0;width:40%;background:var(--primary);border-radius:2px;animation:loadbar 1s ease-in-out infinite}
+body.loading .load-bar{opacity:1}
+@keyframes loadbar{0%{left:-40%}100%{left:100%}}

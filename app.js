@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=52";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=53";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -475,8 +475,13 @@ function showView(name) {
   if (name === "scheduling" && !$("#view-scheduling").dataset.keep) schMode = "list";
   if (name !== "clock") stopGeo();
   if (name === "clock") renderClockCache();
-  authReady.then(() => loaders[name]?.()).catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); });
+  // 讀取超過 0.3 秒就在上方顯示進度條，不會看起來一片空白
+  const seq = ++loadSeq;
+  const t = setTimeout(() => { if (seq === loadSeq) document.body.classList.add("loading"); }, 300);
+  authReady.then(() => loaders[name]?.()).catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); })
+    .finally(() => { clearTimeout(t); if (seq === loadSeq) document.body.classList.remove("loading"); });
 }
+let loadSeq = 0;
 $$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));
 
 // 手機版管理選單
@@ -1029,18 +1034,36 @@ function shiftPunchState(ds, sid, recs) {
   return { s, in: one(inR, "in"), out: one(outR, "out") };
 }
 
+const REC_KEY = "punch_rec_v1";
 async function loadRecords() {
   const month = $("#recMonth").value;
+  // 先顯示上次的資料（或空白月曆），再背景更新
+  try {
+    const c = JSON.parse(localStorage.getItem(REC_KEY) || "null");
+    if (c?.uid === me.id && c.month === month) {
+      rec.month = month; rec.sch = c.sch || {}; rec.leave = c.leave || {};
+      rec.recs = (c.recs || []).map(r => ({ ...r, t: new Date(r.t) }));
+      renderRecords(month);
+    } else if (rec.month !== month) { rec.month = month; rec.recs = []; rec.sch = {}; rec.leave = {}; renderRecords(month, true); }
+  } catch {}
   const [attSnap, schSnap] = await Promise.all([
     getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("month", "==", month))),
     getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month))),
     loadMyReqs(month).catch(() => {})
   ]);
+  if (month !== $("#recMonth").value) return;
   rec.month = month;
   rec.recs = attSnap.docs.map(toRec);
   rec.sch = {};
   rec.leave = {};
   schSnap.forEach(d => { rec.sch[d.data().date] = d.data().shiftIds || []; rec.leave[d.data().date] = d.data().leave || {}; });
+  try {
+    localStorage.setItem(REC_KEY, JSON.stringify({ uid: me.id, month, sch: rec.sch, leave: rec.leave,
+      recs: rec.recs.map(r => ({ type: r.type, shiftId: r.shiftId || null, shiftName: r.shiftName || "", date: r.date, t: +r.t, outOfRange: !!r.outOfRange, reason: r.reason || "", dist: r.dist ?? null, lat: r.lat ?? null, lng: r.lng ?? null, makeup: !!r.makeup })) }));
+  } catch {}
+  renderRecords(month);
+}
+function renderRecords(month, skeleton) {
   if (!rec.sel || rec.sel.slice(0, 7) !== month) {
     const t = ymd(new Date());
     rec.sel = t.slice(0, 7) === month ? t : `${month}-01`;
@@ -1056,12 +1079,14 @@ async function loadRecords() {
       [st.in, st.out].forEach(x => { if (x.label === "遲到" || x.label === "早退") late++; if (x.label.includes("未打卡")) miss++; });
     });
   }
+  const v = n => skeleton ? "–" : n;
   $("#recSummary").innerHTML = `
-    <div class="stat"><b>${days}</b>出勤天數</div>
-    <div class="stat"><b>${late}</b>遲到／早退</div>
-    <div class="stat"><b class="${miss ? "red" : ""}">${miss}</b>未打卡</div>`;
+    <div class="stat"><b>${v(days)}</b>出勤天數</div>
+    <div class="stat"><b>${v(late)}</b>遲到／早退</div>
+    <div class="stat"><b class="${miss && !skeleton ? "red" : ""}">${v(miss)}</b>未打卡</div>`;
   renderRecCal();
-  renderRecDay();
+  if (skeleton) { $("#recDayTitle").textContent = ""; $("#recDetail").innerHTML = `<div class="card empty-card">讀取中…</div>`; }
+  else renderRecDay();
 }
 
 function dayFlag(ds) {
