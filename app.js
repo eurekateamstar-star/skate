@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=49";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=50";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -2275,9 +2275,35 @@ function subText(q) {
 }
 let lv = { month: null, date: null, sch: undefined, monthSch: {}, mine: [] };
 
+const LV_KEY = "punch_lv_v1";
+function lvSaveCache() {
+  try { localStorage.setItem(LV_KEY, JSON.stringify({ uid: me.id, month: lv.month, monthSch: lv.monthSch, mine: lv.mine.map(({ createdAt, updatedAt, reviewedAt, editedAt, ...x }) => x) })); } catch {}
+}
 async function loadLeaveView() {
-  if (!lv.month) { const t = ymd(new Date()); lv.month = t.slice(0, 7); lv.date = t; }
-  await Promise.all([loadLvMonth(), loadMyLeaves(), loadStaff().catch(() => [])]);
+  if (!lv.month) {
+    const t = ymd(new Date()); lv.month = t.slice(0, 7); lv.date = t;
+    // 先用上次的資料秒開
+    try {
+      const c = JSON.parse(localStorage.getItem(LV_KEY) || "null");
+      if (c?.uid === me.id && c.month === lv.month) { lv.monthSch = c.monthSch || {}; lv.mine = c.mine || []; lv.cached = true; }
+    } catch {}
+  }
+  const [y, m] = lv.month.split("-").map(Number);
+  $("#lvMonthTitle").textContent = `${y}年${m}月`;
+  renderLvCal(); renderMyLeaves();
+  if (lv.cached || lv.loaded?.[lv.month]) selectLvDay(lv.date);
+  else loadLvOneDay(lv.date);              // 先只讀選到的那一天
+  // 整個月與請假紀錄在背景更新
+  loadLvMonth().catch(() => {});
+  loadMyLeaves().catch(() => {});
+}
+// 只讀一天（月份還沒載入時用，比較快）
+async function loadLvOneDay(ds) {
+  $("#lvShifts").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
+  const d = await getDoc(doc(db, "schedules", `${me.id}_${ds}`)).catch(() => null);
+  if (ds !== lv.date) return;
+  if (d?.exists()) lv.monthSch[ds] = d.data();
+  selectLvDay(ds);
 }
 async function loadMyLeaves() {
   const snap = await getDocs(query(collection(db, "leaveRequests"), where("empId", "==", me.id)));
@@ -2285,19 +2311,24 @@ async function loadMyLeaves() {
   renderMyLeaves();
   renderLvCal();
   renderLvShifts();
+  lvSaveCache();
 }
 async function loadLvMonth() {
   const [y, m] = lv.month.split("-").map(Number);
   $("#lvMonthTitle").textContent = `${y}年${m}月`;
   renderLvCal();
-  $("#lvShifts").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
   const month = lv.month;
   const snap = await getDocs(query(collection(db, "schedules"), where("empId", "==", me.id), where("month", "==", month)));
   if (month !== lv.month) return;
-  lv.monthSch = {};
-  snap.forEach(d => { lv.monthSch[d.data().date] = d.data(); });
+  const fresh = {};
+  snap.forEach(d => { fresh[d.data().date] = d.data(); });
+  const changed = JSON.stringify(fresh[lv.date] || null) !== JSON.stringify(lv.monthSch[lv.date] || null);
+  lv.monthSch = fresh;
+  (lv.loaded ??= {})[month] = true;
   renderLvCal();
-  selectLvDay(lv.date);
+  // 正在勾選時不要整個重畫，除非那天的班有變
+  if (changed || lv.sch === undefined || !$$("#lvShifts input:checked").length) selectLvDay(lv.date);
+  lvSaveCache();
 }
 const lvWorkIds = sch => (sch?.shiftIds || []).filter(id => shiftMap[id] && shiftMap[id].cat !== "leave")
   .sort((a, b) => (shiftMap[a].start || "99").localeCompare(shiftMap[b].start || "99"));
@@ -2390,10 +2421,14 @@ function renderMyLeaves() {
     </div>`;
   }).join("") || `<div class="card empty-card">還沒有請假紀錄</div>`;
 }
-const lvMove = n => { const [y, m] = lv.month.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); lv.month = ymd(d).slice(0, 7); lv.date = lv.month === ymd(new Date()).slice(0, 7) ? ymd(new Date()) : `${lv.month}-01`; lv.sch = undefined; loadLvMonth(); };
+const lvMove = n => { const [y, m] = lv.month.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); lv.month = ymd(d).slice(0, 7); lv.date = lv.month === ymd(new Date()).slice(0, 7) ? ymd(new Date()) : `${lv.month}-01`; lv.sch = undefined; lv.monthSch = {}; renderLvCal(); loadLvOneDay(lv.date); loadLvMonth().catch(() => {}); };
 $("#lvPrev").onclick = () => lvMove(-1);
 $("#lvNext").onclick = () => lvMove(1);
-$("#lvCal").onclick = e => { const c = e.target.closest(".rday"); if (c) selectLvDay(c.dataset.ds); };
+$("#lvCal").onclick = e => {
+  const c = e.target.closest(".rday"); if (!c) return;
+  if (!lv.loaded?.[lv.month] && !lv.monthSch[c.dataset.ds]) { lv.date = c.dataset.ds; $$("#lvCal .rday").forEach(x => x.classList.toggle("sel", x.dataset.ds === lv.date)); loadLvOneDay(lv.date); }
+  else selectLvDay(c.dataset.ds);
+};
 $("#lvType").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) $$("#lvType button").forEach(x => x.classList.toggle("on", x === b)); };
 $("#lvShifts").onclick = e => { if (e.target.id === "lvAll") { e.preventDefault(); $$("#lvShifts input:not(:disabled)").forEach(i => { i.checked = true; i.closest(".lv-row").classList.add("on"); }); refreshLvSubs(); } };
 $("#lvShifts").onchange = e => {
