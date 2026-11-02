@@ -25,7 +25,12 @@ export default {
   },
   async fetch(req, env, ctx) {
     const cors = {
-      "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+      "Access-Control-Allow-Origin": (() => {
+        const o = req.headers.get("Origin") || "";
+        const ok = [env.ALLOWED_ORIGIN, "https://wild-horses-skating.pages.dev"].filter(Boolean);
+        return !env.ALLOWED_ORIGIN ? "*" : ok.includes(o) || o.endsWith(".wild-horses-skating.pages.dev") ? o : env.ALLOWED_ORIGIN;
+      })(),
+      "Vary": "Origin",
       "Access-Control-Allow-Methods": "POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type"
     };
