@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=41";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=42";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -2567,9 +2567,9 @@ async function applyLeave(q, { ids, type, reason, subs }, mode) {
     subs: keepSubs, subNames: Object.fromEntries(Object.entries(keepSubs).map(([sid, id]) => [sid, empName(id)])),
     subAdded: newAdded
   };
-  if (mode === "approve") Object.assign(upd, { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "approved" });
-  if (mode === "revoke") Object.assign(upd, { status: "revoked", subs: {}, subNames: {}, subAdded: {}, editedBy: me.name, editedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "revoked" });
-  if (mode === "save" && wasApplied) Object.assign(upd, { editedBy: me.name, editedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "edited" });
+  if (mode === "approve") Object.assign(upd, { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false, notifyKind: "approved" });
+  if (mode === "revoke") Object.assign(upd, { status: "revoked", subs: {}, subNames: {}, subAdded: {}, editedBy: me.name, editedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false, notifyKind: "revoked" });
+  if (mode === "save" && wasApplied) Object.assign(upd, { editedBy: me.name, editedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false, notifyKind: "edited" });
   batch.update(doc(db, "leaveRequests", q.id), upd);
   await batch.commit();
 }
@@ -2640,7 +2640,7 @@ async function lmRun(mode, btn) {
       const note = await appDialog({ title: "退回申請", message: `${q.name}・${dayLabel(q.date)} ${q.leaveType}`, input: { type: "text", placeholder: "退回原因（選填，員工會看到）" },
         buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
       if (note === false) return;
-      await updateDoc(doc(db, "leaveRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", notifyKind: "rejected" });
+      await updateDoc(doc(db, "leaveRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false, notifyKind: "rejected" });
       toast("已退回");
     } else {
       if (mode === "revoke" && !(await appConfirm("撤銷請假", `${q.name}・${dayLabel(q.date)}\n撤銷後恢復原本的班，代班人的班也會移除。`, { okText: "撤銷", danger: true }))) return;
@@ -2693,14 +2693,14 @@ $("#apList").onclick = async e => {
         lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `補打卡（${q.reason}）`,
         makeup: true, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
       });
-      batch.update(doc(db, "punchRequests", q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
+      batch.update(doc(db, "punchRequests", q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false });
       await batch.commit();
       toast(`已核准：${title}`);
     } else {
       const note = await appDialog({ title: "退回申請", message: title, input: { type: "text", placeholder: "退回原因（選填，員工會看到）" },
         buttons: [{ text: "取消", value: false }, { text: "退回", value: true, style: "danger" }] });
       if (note === false) return;
-      await updateDoc(doc(db, "punchRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo" });
+      await updateDoc(doc(db, "punchRequests", q.id), { status: "rejected", rejectNote: note || "", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false });
       toast("已退回");
     }
     await loadApprovals();
@@ -2718,7 +2718,36 @@ async function checkPendingOnStart() {
   const go = await appDialog({ title: "有申請待審核", message: parts, buttons: [{ text: "稍後", value: false }, { text: "前往審核", value: true, style: "primary" }] });
   if (go) { ap.tab = ap.leave.length ? "leave" : "punch"; showView("approvals"); }
 }
-authReady.then(() => setTimeout(checkPendingOnStart, 800));
+// 員工：申請審核完成後，打開系統跳出結果（按「知道了」後不再出現）
+async function showMyResults() {
+  if (!me?.id) return;
+  const since = ymd(new Date(Date.now() - 30 * 864e5));
+  const [l, p] = await Promise.all([
+    getDocs(query(collection(db, "leaveRequests"), where("empId", "==", me.id))),
+    getDocs(query(collection(db, "punchRequests"), where("empId", "==", me.id)))
+  ]);
+  const pick = (snap, coll) => snap.docs.map(d => ({ id: d.id, coll, ...d.data() }))
+    .filter(q => q.status !== "pending" && q.seenByEmp === false && q.date >= since);
+  const list = [...pick(l, "leaveRequests"), ...pick(p, "punchRequests")].sort((a, b) => a.date.localeCompare(b.date));
+  if (!list.length) return;
+  const line = q => {
+    if (q.coll === "punchRequests") return `${q.status === "approved" ? "✅ 補打卡已核准" : "❌ 補打卡被退回"}\n${dayLabel(q.date)} ${q.shiftName || ""}・${q.type === "in" ? "上班" : "下班"} ${q.time}` + (q.status === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "");
+    const head = q.status === "revoked" ? "↩️ 請假已撤銷" : q.status === "rejected" ? "❌ 請假被退回" : q.notifyKind === "edited" ? "✏️ 請假已被修改" : "✅ 請假審核通過";
+    return `${head}\n${dayLabel(q.date)} ${q.leaveType}・${(q.shiftNames || []).join("、")}`
+      + (q.status === "approved" ? `\n代班：${subText(q)}` : "")
+      + (q.status === "rejected" && q.rejectNote ? `\n退回原因：${q.rejectNote}` : "")
+      + (q.status === "revoked" ? "\n請照原班表上班" : "");
+  };
+  const allOk = list.every(q => q.status === "approved");
+  await appDialog({ title: list.length > 1 ? `你有 ${list.length} 筆申請有結果` : allOk ? "審核通過" : "申請結果", message: list.map(line).join("\n\n"),
+    buttons: [{ text: "知道了", value: true, style: "primary" }] });
+  await Promise.all(list.map(q => updateDoc(doc(db, q.coll, q.id), { seenByEmp: true }).catch(() => {})));
+  if (list.some(q => q.coll === "leaveRequests") && !$("#view-leave").classList.contains("hidden")) loadLeaveView().catch(() => {});
+}
+authReady.then(() => setTimeout(async () => {
+  await showMyResults().catch(() => {});
+  checkPendingOnStart();
+}, 800));
 
 async function loadReport() {
   const month = $("#repMonth").value;

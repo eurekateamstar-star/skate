@@ -51,6 +51,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 員工看過審核結果：只能把自己的 seenByEmp 改成 true
+    function seenOnly() {
+      return bound() && resource.data.empId == myEmpId()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenByEmp'])
+        && request.resource.data.seenByEmp == true;
+    }
+
     // 補打卡申請：員工只能用自己的身分送出（待審核），管理者審核
     match /punchRequests/{id} {
       allow read: if isAdmin() || (bound() && resource.data.empId == myEmpId());
@@ -59,7 +66,8 @@ service cloud.firestore {
                     && request.resource.data.status == 'pending'
                     && request.resource.data.reason is string
                     && request.resource.data.reason.size() >= 2;
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin() || seenOnly();
+      allow delete: if isAdmin();
     }
 
     // 請假申請：員工送出、可修改／取消審核中的；管理者審核、修改、指定代班
@@ -68,7 +76,7 @@ service cloud.firestore {
       allow create: if bound()
                     && request.resource.data.empId == myEmpId()
                     && request.resource.data.status == 'pending';
-      allow update: if isAdmin()
+      allow update: if isAdmin() || seenOnly()
                     || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending'
                         && request.resource.data.empId == myEmpId() && request.resource.data.status == 'pending');
       allow delete: if isAdmin() || (bound() && resource.data.empId == myEmpId() && resource.data.status == 'pending');
