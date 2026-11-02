@@ -3,7 +3,16 @@ import math
 W,H=2500,1686; HD=250
 BOLD="/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"; MED="/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc"
 f=lambda p,s: ImageFont.truetype(p,s,index=2)  # TC
-BG=(245,245,247); BLUE=(0,113,227); TXT=(29,29,31); MUT=(134,134,139); TINT=(230,240,252)
+THEMES={
+ "blue":dict(BG=(245,245,247),ACC=(0,113,227),TXT=(29,29,31),MUT=(134,134,139),TINT=(230,240,252),CARD=(255,255,255),HDON=(255,255,255),HDOFF=(233,233,238),HTON=None,HTOFF=(134,134,139),G1=(41,151,255),G2=(0,113,227),BIGSUB=(220,236,255)),
+ "A":dict(BG=(246,244,244),ACC=(214,0,28),TXT=(29,29,31),MUT=(134,134,139),TINT=(253,232,234),CARD=(255,255,255),HDON=(255,255,255),HDOFF=(236,233,233),HTON=None,HTOFF=(150,140,140),G1=(236,32,52),G2=(196,0,24),BIGSUB=(255,222,226)),
+ "B":dict(BG=(214,0,28),ACC=(214,0,28),TXT=(29,29,31),MUT=(140,120,122),TINT=(253,232,234),CARD=(255,255,255),HDON=(214,0,28),HDOFF=(170,0,22),HTON=(255,255,255),HTOFF=(255,190,196),G1=(255,255,255),G2=(255,255,255),BIGFG=(214,0,28),BIGSUB=(170,60,70),UL=(255,255,255)),
+ "C":dict(BG=(24,24,26),ACC=(232,24,44),TXT=(245,245,247),MUT=(150,150,156),TINT=(60,22,26),CARD=(44,44,48),HDON=(24,24,26),HDOFF=(38,38,42),HTON=(255,255,255),HTOFF=(120,120,126),G1=(240,36,56),G2=(190,0,24),BIGSUB=(255,214,218),UL=(232,24,44)),
+ "D":dict(BG=(244,238,228),ACC=(200,16,36),TXT=(40,32,30),MUT=(140,126,116),TINT=(250,226,224),CARD=(255,252,247),HDON=(255,252,247),HDOFF=(232,224,212),HTON=None,HTOFF=(150,136,124),G1=(200,16,36),G2=(200,16,36),BIGSUB=(255,220,222)),
+}
+def use(name):
+    globals().update(THEMES[name]); globals()["BLUE"]=ACC
+use("blue")
 import os; OUT=os.path.dirname(os.path.abspath(__file__))+"/"
 
 def icon(d,kind,cx,cy,s,col,w):
@@ -52,15 +61,15 @@ def center(d,text,cx,cy,font,col):
     b=d.textbbox((0,0),text,font=font); d.text((cx-(b[2]-b[0])/2-b[0],cy-(b[3]-b[1])/2-b[1]),text,font=font,fill=col)
 
 def header(d,mode):
-    d.rectangle([0,0,W,HD],fill=(255,255,255))
+    d.rectangle([0,0,W,HD],fill=HDON)
     if mode is None:
-        center(d,"打卡系統",W/2,HD/2,f(BOLD,96),TXT); return
+        center(d,"打卡系統",W/2,HD/2,f(BOLD,96),HTON or TXT); return
     tabs=[("我要打卡","emp"),("管理員","admin")]
     for i,(t,k) in enumerate(tabs):
         x0=i*W/2; on=(k==mode)
-        d.rectangle([x0,0,x0+W/2,HD],fill=(255,255,255) if on else (233,233,238))
-        center(d,t,x0+W/4,HD/2-6,f(BOLD,92),BLUE if on else MUT)
-        if on: d.rounded_rectangle([x0+W/4-130,HD-26,x0+W/4+130,HD-10],radius=8,fill=BLUE)
+        d.rectangle([x0,0,x0+W/2,HD],fill=HDON if on else HDOFF)
+        center(d,t,x0+W/4,HD/2-6,f(BOLD,92),(HTON or ACC) if on else HTOFF)
+        if on: d.rounded_rectangle([x0+W/4-130,HD-26,x0+W/4+130,HD-10],radius=8,fill=globals().get("UL") or ACC)
 
 def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False,row=False):
     m=18
@@ -68,14 +77,15 @@ def tile(img,d,x0,y0,x1,y1,kind,title,sub,big=False,row=False):
         g=Image.new("RGB",(int(x1-x0-2*m),int(y1-y0-2*m)))
         gd=ImageDraw.Draw(g)
         for y in range(g.height):
-            t=y/g.height; gd.line([(0,y),(g.width,y)],fill=(int(41+(0-41)*t),int(151+(113-151)*t),int(255+(227-255)*t)))
+            t=y/g.height; gd.line([(0,y),(g.width,y)],fill=tuple(int(G1[k]+(G2[k]-G1[k])*t) for k in range(3)))
         mask=Image.new("L",g.size,0); ImageDraw.Draw(mask).rounded_rectangle([0,0,g.width-1,g.height-1],radius=60,fill=255)
         img.paste(g,(int(x0+m),int(y0+m)),mask)
         cx=(x0+x1)/2; cy=(y0+y1)/2
-        icon(d,kind,cx,cy-150,330,(255,255,255),30)
-        center(d,title,cx,cy+150,f(BOLD,130),(255,255,255))
-        center(d,sub,cx,cy+290,f(MED,62),(220,236,255)); return
-    d.rounded_rectangle([x0+m,y0+m,x1-m,y1-m],radius=50,fill=(255,255,255))
+        fg=globals().get("BIGFG") or (255,255,255)
+        icon(d,kind,cx,cy-150,330,fg,30)
+        center(d,title,cx,cy+150,f(BOLD,130),fg)
+        center(d,sub,cx,cy+290,f(MED,62),BIGSUB); return
+    d.rounded_rectangle([x0+m,y0+m,x1-m,y1-m],radius=50,fill=CARD)
     cx=(x0+x1)/2; cy=(y0+y1)/2
     if row:   # 橫式：圖示在左、文字在右
         ix=x0+190
@@ -107,5 +117,10 @@ def admin(name):
         x=(i%3)*cw; y=HD+(i//3)*ch; tile(img,d,x,y,x+cw,y+ch,k,t,s)
     img.save(OUT+name,optimize=True)
 
+import sys
+if len(sys.argv)>2:   # 預覽：python make_images.py 主題 輸出資料夾
+    for k in THEMES: globals().pop("BIGFG",None); globals().pop("UL",None)
+    use(sys.argv[1]); OUT=sys.argv[2].rstrip("/")+"/"
+    emp("emp","menu-admin-staff.png"); admin("menu-admin.png"); sys.exit()
 emp(None,"menu-staff.png"); emp("emp","menu-admin-staff.png"); admin("menu-admin.png")
 import os; print([ (n, os.path.getsize(OUT+n)//1024) for n in os.listdir(OUT)])
