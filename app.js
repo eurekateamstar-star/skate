@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=56";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=57";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -3101,27 +3101,46 @@ function renderReport() {
     if (r.inD.far) s.far++;
     if (r.outD.far) s.far++;
   });
-  const num = (n, cls) => n ? `<span class="tag ${cls}">${n}</span>` : "0";
-  $("#repSum").innerHTML = Object.values(sum).sort((a, b) => (a.u.empNo || "").localeCompare(b.u.empNo || "")).map(s => `
-    <tr><td>${esc(s.u.empNo)}</td><td>${esc(s.u.name)}</td><td>${s.days.size}</td><td>${s.hrs.toFixed(2)}</td>
-    <td>${num(s.late, "bad")}</td><td>${num(s.early, "bad")}</td><td>${num(s.miss, "bad")}</td><td>${num(s.far, "warn")}</td></tr>`).join("")
-    || `<tr><td colspan="8" class="empty">本月沒有資料</td></tr>`;
+  const colors = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff", "#ac8e68"];
+  const av = u => u.linePicture ? `<img class="emp-av sm" src="${esc(u.linePicture)}" alt="">`
+    : `<span class="emp-av sm" style="background:${colors[[...String(u.name || u.id)].reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length]}">${esc((u.name || "?").slice(-2))}</span>`;
+  const people = Object.values(sum).sort((a, b) => (a.u.empNo || "").localeCompare(b.u.empNo || ""));
+  $("#repSum").innerHTML = people.map(x => {
+    const bad = [x.late ? `<span class="tag bad">遲到 ${x.late}</span>` : "", x.early ? `<span class="tag bad">早退 ${x.early}</span>` : "",
+      x.miss ? `<span class="tag bad">未打卡 ${x.miss}</span>` : "", x.far ? `<span class="tag warn">地點異常 ${x.far}</span>` : ""].join("");
+    return `<button class="card rp-card ${f === x.u.id ? "on" : ""}" data-eid="${x.u.id}">
+      <div class="rp-top">${av(x.u)}<span><b>${esc(x.u.name)}</b><small>${esc(x.u.empNo || "")}</small></span></div>
+      <div class="rp-nums"><span><b>${x.days.size}</b>出勤天</span><span><b>${x.hrs.toFixed(1)}</b>小時</span></div>
+      <div class="rp-tags">${bad || `<span class="tag ok">全部正常</span>`}</div></button>`;
+  }).join("") || `<div class="card empty-card">本月沒有資料</div>`;
 
-  $("#repCount").textContent = `共 ${rows.length} 筆`;
-  const cell = (x, cls, k) => x.leave ? `<td class="${cls}" colspan="5" data-label="${k}"><span class="tag ok">請假・${esc(x.leave)}</span></td>` : `
-    <td class="${cls} t" data-label="${k}時間">${x.time || "—"}</td>
-    <td class="${cls}" data-label="${k}打卡地點">${x.place || "—"}</td>
-    <td class="${cls}" data-label="${k}查看地點">${x.r?.lat != null ? `<a href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">查看地點</a>` : "—"}</td>
-    <td class="${cls} wrap" data-label="${k}地點異常原因">${x.reason ? `<span class="tag warn">異常</span> ${esc(x.reason)}` : "—"}</td>
-    <td class="${cls}" data-label="${k}出勤異常">${x.abn ? `<span class="tag bad">${x.abn}</span>` : (x.r ? `<span class="tag ok">正常</span>` : "—")}</td>`;
-  $("#repList").innerHTML = rows.slice(0, 1500).map(r => `
-    <tr class="${isAbn(r) ? "abn" : ""}">
-      <td>${esc(r.u.empNo)}</td><td>${esc(r.u.name)}</td><td>${dayLabel(r.date)}</td>
-      <td>${r.s ? chipHtml(r.sid) : `<span class="tag">${esc(r.inD.r?.shiftName || r.outD.r?.shiftName || "未指定班別")}</span>`}</td>
-      ${r.leave ? `<td colspan="10" data-label="出勤"><span class="tag ok">請假・${esc(r.leave)}</span></td>` : cell(r.inD, "g-in", "上班") + cell(r.outD, "g-out", "下班")}
-      <td>${r.hrs ? r.hrs.toFixed(2) : "—"}</td>
-    </tr>`).join("") || `<tr><td colspan="15" class="empty">沒有符合的紀錄</td></tr>`;
+  $("#repCount").textContent = `共 ${rows.length} 筆${f ? `・只看 ${esc(employees.find(u => u.id === f)?.name || "")}` : ""}`;
+  const st = (x, k) => {
+    if (x.r) return `<span class="rp-t">${x.time}</span>${x.abn ? `<span class="tag bad">${x.abn.replace(/ 分鐘/, "分")}</span>` : `<span class="tag ok">正常</span>`}${x.far ? `<span class="tag warn">範圍外</span>` : ""}`;
+    return x.abn ? `<span class="rp-t none">--:--</span><span class="tag bad">${x.abn}</span>` : `<span class="rp-t none">--:--</span><span class="tag muted">未到</span>`;
+  };
+  const extra = x => [x.reason ? `原因：${esc(x.reason)}` : "", x.r?.lat != null ? `<a href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">地圖</a>` : ""].filter(Boolean).join("・");
+  let html = "", lastDate = "";
+  rows.slice(0, 1500).forEach(r => {
+    if (r.date !== lastDate) { if (lastDate) html += `</div>`; lastDate = r.date; html += `<div class="rp-day-h">${dayLabel(r.date)}</div><div class="card rp-day">`; }
+    const sname = r.s ? r.s.name : (r.inD.r?.shiftName || r.outD.r?.shiftName || "未指定班別");
+    const time = r.s?.start && r.s?.end ? `${r.s.start}–${r.s.end}` : "";
+    html += `<div class="rp-row ${isAbn(r) ? "abn" : ""}">
+      <div class="rp-who">${av(r.u)}<span><b>${esc(r.u.name)}</b><small><i class="dot" style="background:${esc(r.s?.color || "#9aa0a6")}"></i>${esc(sname)}${time ? `　${time}` : ""}</small></span>${r.hrs ? `<em class="rp-hrs">${r.hrs.toFixed(2)} 時</em>` : ""}</div>
+      ${r.leave ? `<div class="rp-io"><span class="tag ok">請假・${esc(r.leave)}</span></div>` : `
+      <div class="rp-io"><div><label>上班</label>${st(r.inD, "上班")}${extra(r.inD) ? `<small>${extra(r.inD)}</small>` : ""}</div>
+        <div><label>下班</label>${st(r.outD, "下班")}${extra(r.outD) ? `<small>${extra(r.outD)}</small>` : ""}</div></div>`}
+    </div>`;
+  });
+  if (lastDate) html += `</div>`;
+  $("#repList").innerHTML = html || `<div class="card empty-card">沒有符合的紀錄</div>`;
 }
+$("#repSum").onclick = e => {
+  const c = e.target.closest(".rp-card"); if (!c) return;
+  $("#repEmp").value = $("#repEmp").value === c.dataset.eid ? "" : c.dataset.eid;
+  renderReport();
+  $("#repList").scrollIntoView({ behavior: "smooth", block: "start" });
+};
 $("#repEmp").onchange = renderReport;
 $("#repStatus").onchange = renderReport;
 $("#repSearch").oninput = renderReport;
