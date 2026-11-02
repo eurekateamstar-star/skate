@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=58";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=60";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -109,6 +109,18 @@ function errMsg(err) {
 function notifyAdmins(coll, id) {
   fetch(WORKER_URL + "/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ coll, id }), keepalive: true }).catch(() => {});
 }
+
+// 手機版用新版面、電腦版用原本的表格
+const isMob = () => innerWidth <= 768;
+let lastMob = isMob();
+addEventListener("resize", () => {
+  const m = isMob();
+  if (m === lastMob) return; lastMob = m;
+  const v = $$(".view").find(x => !x.classList.contains("hidden"))?.id;
+  if (v === "view-report" && reportRows?.length) renderReport();
+  if (v === "view-shifts") renderShiftList();
+  if (v === "view-payroll" && pay.tab === "rates") renderRates();
+});
 
 /* ================= 狀態 ================= */
 let me = null;          // 目前登入的員工 {id, name, empNo, role, ...}
@@ -1466,13 +1478,34 @@ const SH_COLORS = ["#3a3f44", "#7b4fb0", "#2f6fb5", "#0a84ff", "#3d9a3a", "#30d1
 async function renderShiftList() {
   await Promise.all([loadShiftTypes(), loadLocations()]);
   $$("#shTab button").forEach(b => b.classList.toggle("on", b.dataset.v === shTab));
-  $("#shPaneShift").classList.toggle("hidden", shTab !== "shift");
-  $("#shPaneLoc").classList.toggle("hidden", shTab !== "loc");
+  const mob = isMob();
+  $("#shPaneShift").classList.toggle("hidden", mob && shTab !== "shift");
+  $("#shPaneLoc").classList.toggle("hidden", mob && shTab !== "loc");
   renderLocList();
-  if (shTab === "loc") initLocMap();
+  if (!mob || shTab === "loc") initLocMap();
   drawShiftRows();
 }
+function drawShiftRowsDesk() {
+  const locOpts = sel => `<option value="">不限地點</option>` + locations.map(l => `<option value="${l.id}" ${sel === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  $("#shiftList").innerHTML = `<table class="tbl"><thead><tr><th></th><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>打卡地點</th><th>顏色</th><th></th></tr></thead><tbody>` + (shiftTypes.length ? shiftTypes.map(s => `
+    <tr data-id="${s.id}">
+      <td><input type="checkbox" class="s-chk"></td>
+      <td><input class="s-code" value="${esc(s.code || "")}" size="5"></td>
+      <td><select class="s-cat"><option value="shift" ${s.cat !== "leave" ? "selected" : ""}>班別</option><option value="leave" ${s.cat === "leave" ? "selected" : ""}>休假</option></select></td>
+      <td><input class="s-name" value="${esc(s.name)}" size="22"></td>
+      <td><input class="s-start" type="time" value="${esc(s.start || "")}"></td>
+      <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
+      <td>${shiftHours(s) || "—"}${s.breakStart && s.breakEnd ? `<div class="emp-no">休息 ${esc(s.breakStart)}~${esc(s.breakEnd)}</div>` : ""}</td>
+      <td><div class="loc-pair"><label><span>上班</span><select class="s-loc">${locOpts(s.locationId || "")}</select></label>
+        <label><span>下班</span><select class="s-oloc">${locOpts(s.outLocationId || "").replace("不限地點", "同上班地點")}</select></label></div></td>
+      <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
+      <td><button class="btn small primary s-save">儲存</button> <button class="btn small danger s-del">刪除</button></td>
+    </tr>`).join("") : `<tr><td colspan="10" class="empty">尚未建立班別</td></tr>`) + `</tbody></table>`;
+  $("#shCount").textContent = `共 ${shiftTypes.length} 個班別`;
+  $("#shAll").checked = false; updShSel();
+}
 function drawShiftRows() {
+  if (!isMob()) return drawShiftRowsDesk();
   const q = $("#shSearch").value.trim().toLowerCase();
   const list = shiftTypes.filter(s => (!q || `${s.name} ${s.code || ""}`.toLowerCase().includes(q))
     && (!shF || (shF === "shift" && s.cat !== "leave") || (shF === "leave" && s.cat === "leave") || (shF === "noloc" && s.cat !== "leave" && !s.locationId)));
@@ -1500,9 +1533,37 @@ function updShSel() { const n = $$(".s-chk:checked").length; $("#shDelSel").clas
 $("#shTab").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; shTab = b.dataset.v; renderShiftList(); };
 $("#shSearch").oninput = drawShiftRows;
 $("#shFilter").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; shF = b.dataset.v; setSeg("#shFilter", shF); drawShiftRows(); };
-$("#shiftList").onclick = e => {
+$("#shiftList").onclick = async e => {
   if (e.target.classList.contains("s-chk")) return updShSel();
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) {   // 電腦版表格：直接編輯
+    const id = tr.dataset.id;
+    try {
+      if (e.target.classList.contains("s-save")) {
+        const data = {
+          code: $(".s-code", tr).value.trim(), cat: $(".s-cat", tr).value, name: $(".s-name", tr).value.trim(),
+          start: $(".s-start", tr).value, end: $(".s-end", tr).value,
+          locationId: $(".s-loc", tr).value || "", outLocationId: $(".s-oloc", tr).value || "", color: $(".s-color", tr).value
+        };
+        if (!data.name) return toast("名稱不可空白");
+        if ((data.start && !data.end) || (!data.start && data.end)) return toast("上班與下班時間要一起填，或都留空");
+        await updateDoc(doc(db, "shiftTypes", id), data);
+        toast(`已儲存「${data.name}」`); renderShiftList();
+      } else if (e.target.classList.contains("s-del")) {
+        if (!(await appConfirm("刪除班別", `確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`, { okText: "刪除", danger: true }))) return;
+        await deleteDoc(doc(db, "shiftTypes", id)); toast("已刪除"); renderShiftList();
+      }
+    } catch (err) { toast("操作失敗：" + errMsg(err)); }
+    return;
+  }
   const r = e.target.closest(".sh-row"); if (r) openShift(shiftMap[r.dataset.id]);
+};
+$("#shiftForm").onsubmit = async e => {
+  e.preventDefault();
+  const data = { cat: $("#shCat").value, name: $("#shName").value.trim(), start: $("#shStart").value, end: $("#shEnd").value, color: $("#shColor").value, order: Date.now() };
+  if (!data.name) return;
+  try { await addDoc(collection(db, "shiftTypes"), data); e.target.reset(); $("#shColor").value = "#2e9e3f"; toast("已新增班別"); renderShiftList(); }
+  catch (err) { toast("新增失敗：" + errMsg(err)); }
 };
 $("#shAddBtn").onclick = () => openShift(null);
 
@@ -1563,6 +1624,17 @@ const boxOf = (lat, radius) => {
 };
 
 function renderLocList() {
+  if (!isMob()) {
+    const usedN = id => shiftTypes.filter(s => s.locationId === id || s.outLocationId === id).length;
+    $("#locList").innerHTML = `<table class="tbl"><thead><tr><th>地點</th><th>座標</th><th>範圍（公尺）</th><th></th></tr></thead><tbody>` + (locations.map(l => `
+      <tr data-id="${l.id}">
+        <td><input class="l-name" value="${esc(l.name)}" size="14"></td>
+        <td><a href="https://www.google.com/maps?q=${l.lat},${l.lng}" target="_blank" rel="noopener">${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}</a><div class="emp-no">${usedN(l.id)} 個班別使用</div></td>
+        <td><input class="l-radius" type="number" min="10" max="1000" value="${l.radius || 50}" style="width:80px"></td>
+        <td><button class="btn small primary l-save">儲存</button> <button class="btn small danger l-del">刪除</button></td>
+      </tr>`).join("") || `<tr><td colspan="4" class="empty">尚未建立打卡地點</td></tr>`) + `</tbody></table>`;
+    return;
+  }
   const used = id => shiftTypes.filter(x => x.locationId === id || x.outLocationId === id);
   $("#locList").innerHTML = locations.map(l => {
     const u = used(l.id);
@@ -1573,7 +1645,19 @@ function renderLocList() {
   }).join("") || `<p class="empty" style="padding:20px">尚未建立打卡地點</p>`;
 }
 let lc = null;
-$("#locList").onclick = e => {
+$("#locList").onclick = async e => {
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) {   // 電腦版表格
+    const l = locMap[tr.dataset.id];
+    try {
+      if (e.target.classList.contains("l-save")) {
+        const radius = Math.max(10, Math.min(1000, +$(".l-radius", tr).value || 50));
+        await updateDoc(doc(db, "locations", l.id), { name: $(".l-name", tr).value.trim() || l.name, radius, ...boxOf(l.lat, radius) });
+        toast("已儲存"); renderShiftList();
+      } else if (e.target.classList.contains("l-del")) { lc = l; $("#lcDel").click(); }
+    } catch (err) { toast("操作失敗：" + errMsg(err)); }
+    return;
+  }
   const r = e.target.closest(".lc-row"); if (!r) return;
   const l = locMap[r.dataset.id]; lc = l;
   $("#lcName").value = l.name; $("#lcRadius").value = l.radius || 50; $("#lcRadiusV").textContent = `${l.radius || 50} 公尺`;
@@ -1702,7 +1786,7 @@ async function deleteShifts(ids) {
   renderShiftList();
 }
 $("#shDelSel").onclick = async () => {
-  const ids = $$(".s-chk:checked").map(c => c.closest(".sh-row").dataset.id);
+  const ids = $$(".s-chk:checked").map(c => c.closest("[data-id]").dataset.id);
   if (!ids.length) return toast("請先勾選要刪除的班別");
   if (!(await appConfirm("刪除班別", `確定刪除勾選的 ${ids.length} 個班別？`, { okText: "刪除", danger: true }))) return;
   try { await deleteShifts(ids); } catch (err) { toast("刪除失敗：" + errMsg(err)); }
@@ -3101,6 +3185,7 @@ function renderReport() {
     if (r.inD.far) s.far++;
     if (r.outD.far) s.far++;
   });
+  if (!isMob()) return renderReportDesk(rows, sum);
   const colors = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff", "#ac8e68"];
   const av = u => u.linePicture ? `<img class="emp-av sm" src="${esc(u.linePicture)}" alt="">`
     : `<span class="emp-av sm" style="background:${colors[[...String(u.name || u.id)].reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length]}">${esc((u.name || "?").slice(-2))}</span>`;
@@ -3134,6 +3219,28 @@ function renderReport() {
   });
   if (lastDate) html += `</div>`;
   $("#repList").innerHTML = html || `<div class="card empty-card">沒有符合的紀錄</div>`;
+}
+// 電腦版：原本的表格
+function renderReportDesk(rows, sum) {
+  const num = (n, cls) => n ? `<span class="tag ${cls}">${n}</span>` : "0";
+  $("#repSumT").innerHTML = Object.values(sum).sort((a, b) => (a.u.empNo || "").localeCompare(b.u.empNo || "")).map(s => `
+    <tr><td>${esc(s.u.empNo)}</td><td>${esc(s.u.name)}</td><td>${s.days.size}</td><td>${s.hrs.toFixed(2)}</td>
+    <td>${num(s.late, "bad")}</td><td>${num(s.early, "bad")}</td><td>${num(s.miss, "bad")}</td><td>${num(s.far, "warn")}</td></tr>`).join("")
+    || `<tr><td colspan="8" class="empty">本月沒有資料</td></tr>`;
+  $("#repCountT").textContent = `共 ${rows.length} 筆`;
+  const cell = (x, cls, k) => `
+    <td class="${cls} t" data-label="${k}時間">${x.time || "—"}</td>
+    <td class="${cls}" data-label="${k}打卡地點">${x.place || "—"}</td>
+    <td class="${cls}" data-label="${k}查看地點">${x.r?.lat != null ? `<a href="https://www.google.com/maps?q=${x.r.lat},${x.r.lng}" target="_blank" rel="noopener">查看地點</a>` : "—"}</td>
+    <td class="${cls} wrap" data-label="${k}地點異常原因">${x.reason ? `<span class="tag warn">異常</span> ${esc(x.reason)}` : "—"}</td>
+    <td class="${cls}" data-label="${k}出勤異常">${x.abn ? `<span class="tag bad">${x.abn}</span>` : (x.r ? `<span class="tag ok">正常</span>` : "—")}</td>`;
+  $("#repListT").innerHTML = rows.slice(0, 1500).map(r => `
+    <tr class="${isAbn(r) ? "abn" : ""}">
+      <td>${esc(r.u.empNo)}</td><td>${esc(r.u.name)}</td><td>${dayLabel(r.date)}</td>
+      <td>${r.s ? chipHtml(r.sid) : `<span class="tag">${esc(r.inD.r?.shiftName || r.outD.r?.shiftName || "未指定班別")}</span>`}</td>
+      ${r.leave ? `<td colspan="10" data-label="出勤"><span class="tag ok">請假・${esc(r.leave)}</span></td>` : cell(r.inD, "g-in", "上班") + cell(r.outD, "g-out", "下班")}
+      <td>${r.hrs ? r.hrs.toFixed(2) : "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="15" class="empty">沒有符合的紀錄</td></tr>`;
 }
 $("#repSum").onclick = e => {
   const c = e.target.closest(".rp-card"); if (!c) return;
@@ -3708,7 +3815,17 @@ function setRate(eid, sid, v) {
   if (v > 0) (pay.rates[eid] ??= {})[sid] = v; else if (pay.rates[eid]) delete pay.rates[eid][sid];
   rateUI.dirty = true; $("#rateSave").textContent = "儲存變更"; $("#rateSave").classList.add("pulse");
 }
-function renderRates() { renderRatePick(); renderRateList(); }
+function renderRates() { if (!isMob()) return renderRatesDesk(); renderRatePick(); renderRateList(); }
+// 電腦版：原本的「班別 × 人員」表格
+function renderRatesDesk() {
+  const cntS = id => Object.values(pay.rates).filter(r => +r?.[id] > 0).length;
+  const cntE = id => Object.values(pay.rates[id] || {}).filter(v => +v > 0).length;
+  const emps = activeEmployees().map((u, i) => ({ u, i, n: cntE(u.id) })).sort((a, b) => (b.n > 0) - (a.n > 0) || a.i - b.i).map(x => x.u);
+  const shifts = rateShifts().map((s, i) => ({ s, i, n: cntS(s.id) })).sort((a, b) => b.n - a.n || a.i - b.i).map(x => x.s);
+  $("#rateTbl").innerHTML = `<thead><tr><th class="rc">班別</th>${emps.map(u => `<th>${esc(u.name)}<small>${esc(u.empNo || "")}</small></th>`).join("")}</tr></thead>
+    <tbody>${shifts.map(s => `<tr><th class="rc"><span class="dot" style="background:${esc(s.color)}"></span>${esc(s.name)}</th>${emps.map(u =>
+      `<td><input type="number" min="0" step="50" data-e="${u.id}" data-s="${s.id}" value="${pay.rates[u.id]?.[s.id] || ""}"></td>`).join("")}</tr>`).join("")}</tbody>`;
+}
 function renderRatePick() {
   const emp = rateUI.mode === "emp";
   setSeg("#rateMode", rateUI.mode);
@@ -3745,6 +3862,7 @@ function renderRateList() {
       <span class="rr-in">$<input type="number" inputmode="numeric" min="0" step="50" data-e="${u.id}" data-s="${sel}" value="${v}" placeholder="0"></span></label>`).join("");
   }
 }
+$("#rateTbl").oninput = e => { const i = e.target.closest("input[data-e]"); if (i) setRate(i.dataset.e, i.dataset.s, i.value); };
 $("#rateMode").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; rateUI.mode = b.dataset.v; rateUI.sel = null; renderRates(); };
 $("#rateSearch").oninput = renderRates;
 $("#ratePick").onclick = e => { const b = e.target.closest(".emp-chip[data-id]"); if (!b) return; rateUI.sel = b.dataset.id; renderRates(); };

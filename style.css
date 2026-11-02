@@ -949,3 +949,11 @@ body.loading .load-bar{opacity:1}
 #rateSave.pulse{box-shadow:0 0 0 4px rgba(0,113,227,.25)}
 @media (max-width:768px){ .rr-in input{width:96px} .rate-tools{padding:12px} .rate-row{padding:10px 12px} }
 .rate-row,.rr-name{text-align:left;align-items:flex-start}.rate-row{align-items:center}
+/* 電腦版／手機版切換 */
+.mob-only-i,.mob-flex{display:none!important}
+@media (max-width:768px){ .mob-only-i{display:revert!important} .mob-flex{display:flex!important} }
+@media (min-width:769px){
+  #view-shifts:not(.hidden){display:flex;flex-direction:column}
+  #view-shifts > .view-head{order:0} #shPaneLoc{order:1} #shPaneShift{order:2}
+  #shiftList,#locList{padding:0;overflow-x:auto}
+}

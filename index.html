@@ -20,7 +20,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=58">
+  <link rel="stylesheet" href="style.css?v=60">
 </head>
 <body>
 
@@ -312,10 +312,38 @@
           </select>
           <input id="repSearch" class="filter" placeholder="搜尋姓名、員編或班別">
         </div>
-        <div class="rd-title">每人統計 <span class="count">點人名只看他的紀錄</span></div>
-        <div class="rep-people" id="repSum"></div>
-        <div class="rd-title">打卡紀錄 <span class="count" id="repCount"></span></div>
-        <div id="repList"></div>
+        <!-- 電腦版：原本的表格 -->
+        <div class="desk-only">
+          <div class="card">
+            <h3>月統計</h3>
+            <table class="tbl">
+              <thead><tr><th>員編</th><th>姓名</th><th>出勤天數</th><th>總工時</th><th>遲到</th><th>早退</th><th>未打卡</th><th>地點異常</th></tr></thead>
+              <tbody id="repSumT"></tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>打卡紀錄 <span class="count" id="repCountT"></span></h3>
+            <div class="rep-wrap">
+              <table class="tbl rep-tbl">
+                <thead>
+                  <tr class="grp"><th colspan="4"></th><th colspan="5" class="g-in">上班打卡</th><th colspan="5" class="g-out">下班打卡</th><th></th></tr>
+                  <tr><th>員編</th><th>姓名</th><th>打卡日期</th><th>班別</th>
+                    <th class="g-in">上班時間</th><th class="g-in">打卡地點</th><th class="g-in">查看地點</th><th class="g-in">地點異常原因</th><th class="g-in">出勤異常</th>
+                    <th class="g-out">下班時間</th><th class="g-out">打卡地點</th><th class="g-out">查看地點</th><th class="g-out">地點異常原因</th><th class="g-out">出勤異常</th>
+                    <th>工時</th></tr>
+                </thead>
+                <tbody id="repListT"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <!-- 手機版：卡片 -->
+        <div class="mob-only">
+          <div class="rd-title">每人統計 <span class="count">點人名只看他的紀錄</span></div>
+          <div class="rep-people" id="repSum"></div>
+          <div class="rd-title">打卡紀錄 <span class="count" id="repCount"></span></div>
+          <div id="repList"></div>
+        </div>
       </section>
 
       <!-- 薪資計算 -->
@@ -371,14 +399,15 @@
                 <button class="btn primary" id="rateSave">儲存</button>
               </div>
             </div>
-            <p class="hint">先選人（或選班別），再填每堂的錢；空白 = 0 元。也可以從原本的薪資 Excel（「薪資標準」工作表）匯入。</p>
-            <div class="rate-head">
+            <p class="hint">空白 = 0 元。<span class="mob-only-i">先選人（或選班別），再填每堂的錢。</span>也可以從原本的薪資 Excel（「薪資標準」工作表）匯入。</p>
+            <div class="rate-wrap desk-only"><table class="rate-tbl" id="rateTbl"></table></div>
+            <div class="rate-head mob-flex">
               <div class="seg" id="rateMode"><button data-v="emp" class="on">依人員設定</button><button data-v="shift">依班別設定</button></div>
               <input id="rateSearch" placeholder="搜尋">
             </div>
-            <div class="rate-pick" id="ratePick"></div>
+            <div class="rate-pick mob-flex" id="ratePick"></div>
           </div>
-          <div class="card rate-panel">
+          <div class="card rate-panel mob-only">
             <div class="rate-tools" id="rateTools"></div>
             <div class="rate-list" id="rateList"></div>
           </div>
@@ -411,12 +440,23 @@
       <section id="view-shifts" class="view hidden">
         <div class="view-head">
           <div class="vh-title"><h2>班別設定</h2><div class="vh-sub" id="shSub">點班別可以修改時間、顏色、打卡地點</div></div>
-          <div class="vh-actions"><div class="seg" id="shTab"><button data-v="shift" class="on">班別</button><button data-v="loc">打卡地點</button></div></div>
+          <div class="vh-actions mob-only-i"><div class="seg" id="shTab"><button data-v="shift" class="on">班別</button><button data-v="loc">打卡地點</button></div></div>
         </div>
 
         <!-- 班別 -->
         <div id="shPaneShift">
-          <div class="emp-tools">
+          <div class="card desk-only">
+            <h3>新增班別</h3>
+            <form id="shiftForm" class="form-row">
+              <select id="shCat"><option value="shift">班別</option><option value="leave">休假</option></select>
+              <input id="shName" placeholder="名稱（例：早班）" required>
+              <input id="shStart" type="time" title="開始時間"><span>~</span><input id="shEnd" type="time" title="結束時間">
+              <input id="shColor" type="color" value="#2e9e3f" title="顏色">
+              <button class="btn primary">新增</button>
+            </form>
+            <p class="hint">休假類（國定假日、例假日…）可不填時間。有填時間的班別會用來判斷遲到 / 早退。</p>
+          </div>
+          <div class="emp-tools mob-flex">
             <input id="shSearch" placeholder="搜尋班別名稱或代碼">
             <div class="seg" id="shFilter"><button data-v="" class="on">全部</button><button data-v="shift">上班</button><button data-v="leave">休假</button><button data-v="noloc">沒設地點</button></div>
           </div>
@@ -424,7 +464,7 @@
             <label class="sh-all"><input type="checkbox" id="shAll"> 全選</label>
             <span class="hint" style="margin:0" id="shCount"></span>
             <button class="btn small danger hidden" id="shDelSel">刪除勾選</button>
-            <button class="btn primary sh-add" id="shAddBtn">＋ 新增班別</button>
+            <button class="btn primary sh-add mob-only-i" id="shAddBtn">＋ 新增班別</button>
           </div>
           <div class="card sh-list" id="shiftList"></div>
           <details class="card">
@@ -703,6 +743,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=58"></script>
+<script type="module" src="app.js?v=60"></script>
 </body>
 </html>
