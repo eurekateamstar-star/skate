@@ -399,8 +399,8 @@ async function loadPlan(fs, today, force) {
 
 // LINE 免費方案每月訊息有限，預設只通知管理者
 const NOTIFY = {
-  leaveToAdmin: true,       // 新的請假申請 → 立即通知管理者
-  dailyDigest: true,        // 每天早上 8:00：還沒審核的補打卡／加班／請假 → 一則彙整給管理者（都處理完就不發）
+  leaveToAdmin: true,       // 新的請假、加入班表申請 → 立即通知管理者
+  dailyDigest: true,        // 每天早上 8:00：還沒審核的補打卡（及仍未處理的請假／加班）→ 一則彙整給管理者（都處理完就不發）
   shiftReminders: false,    // 上下班前後提醒員工（很耗訊息量，預設關閉）
   employeeResults: false    // 審核結果、薪資發布、代班 → 通知員工（員工打開系統會跳出，預設不發 LINE）
 };
@@ -458,15 +458,20 @@ async function runReminders(env, manual = false) {
 
   }
 
-  // 2. 新的請假申請 → 立即通知管理者
+  // 2. 新的請假、加入班表（加班）申請 → 立即通知管理者（合成一則）
   if (NOTIFY.leaveToAdmin) {
-    const pendL = await fs.whereAnd("leaveRequests", { notified: false });
-    const newL = pendL.filter(q => q.status === "pending");
-    if (newL.length) {
-      const lines = newL.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}（${(q.shiftNames || []).length} 個班）`);
-      result.notifiedAdmins = await toAdmins(card(`📝 ${newL.length} 筆請假待審核`, "簽核中心", lines.slice(0, 8).join("\n") + (lines.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=approvals`));
+    const [pendL, pendS] = await Promise.all([fs.whereAnd("leaveRequests", { notified: false }), fs.whereAnd("shiftRequests", { notified: false })]);
+    const newL = pendL.filter(q => q.status === "pending"), newS = pendS.filter(q => q.status === "pending");
+    if (newL.length || newS.length) {
+      const lines = [
+        ...newL.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}（${(q.shiftNames || []).length} 個班）`),
+        ...newS.map(q => `➕ ${q.name}　${q.date.slice(5)} 申請加入班表：${q.shiftName}`)
+      ];
+      const title = [newL.length ? `${newL.length} 筆請假` : "", newS.length ? `${newS.length} 筆加入班表` : ""].filter(Boolean).join("、");
+      result.notifiedAdmins = await toAdmins(card(`📝 ${title}待審核`, "簽核中心", lines.slice(0, 8).join("\n") + (lines.length > 8 ? "\n…" : ""), "前往審核", `${LIFF}?view=approvals`));
     }
     for (const q of pendL) await fs.patchPath(`leaveRequests/${q.id}`, { notified: true }).catch(() => {});
+    for (const q of pendS) await fs.patchPath(`shiftRequests/${q.id}`, { notified: true }).catch(() => {});
   }
 
   // 3. 每天早上 8:00 彙整還沒審核的申請（已經處理完就不發）
