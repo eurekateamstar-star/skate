@@ -3,10 +3,35 @@ import {
   getAuth, onAuthStateChanged, signInWithCustomToken, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  initializeFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
-  collection, query, where, getDocs, serverTimestamp, writeBatch, deleteField, arrayUnion, arrayRemove
+  initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
+  collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=51";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=52";
+
+/* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
+const MEMO = new Map();
+const MEMO_TTL = 3 * 60e3;
+const setDoc = (...a) => { MEMO.clear(); return _setDoc(...a); };
+const updateDoc = (...a) => { MEMO.clear(); return _updateDoc(...a); };
+const deleteDoc = (...a) => { MEMO.clear(); return _deleteDoc(...a); };
+const addDoc = (...a) => { MEMO.clear(); return _addDoc(...a); };
+const writeBatch = d => { const b = _writeBatch(d); const c = b.commit.bind(b); b.commit = () => { MEMO.clear(); return c(); }; return b; };
+function collDocs(coll) {
+  const k = coll + "|*", hit = MEMO.get(k);
+  if (hit && Date.now() - hit.at < MEMO_TTL) return hit.p;
+  const p = getDocs(collection(db, coll));
+  MEMO.set(k, { at: Date.now(), p });
+  p.catch(() => MEMO.delete(k));
+  return p;
+}
+function monthDocs(coll, month) {
+  const k = coll + "|" + month, hit = MEMO.get(k);
+  if (hit && Date.now() - hit.at < MEMO_TTL) return hit.p;
+  const p = getDocs(query(collection(db, coll), where("month", "==", month)));
+  MEMO.set(k, { at: Date.now(), p });
+  p.catch(() => MEMO.delete(k));
+  return p;
+}
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -76,7 +101,7 @@ function dayLabel(dateStr) {
   return `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})`;
 }
 function errMsg(err) {
-  const map = { "permission-denied": "權限不足", "unavailable": "網路連線異常" };
+  const map = { "permission-denied": "權限不足", "unavailable": "網路連線異常", "resource-exhausted": "Firebase 今日免費讀取額度已用完（台灣時間下午 4 點後恢復）" };
   return map[err.code] || err.message;
 }
 
@@ -482,7 +507,7 @@ $("#repMonth").onchange = () => loadReport();
 
 /* ================= 班別 ================= */
 async function loadShiftTypes() {
-  const snap = await getDocs(collection(db, "shiftTypes"));
+  const snap = await collDocs("shiftTypes");
   shiftTypes = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
@@ -510,7 +535,7 @@ const mapLink = r => r.lat != null
 // ---- 打卡地點 ----
 let locations = [], locMap = {};
 async function loadLocations() {
-  const snap = await getDocs(collection(db, "locations"));
+  const snap = await collDocs("locations");
   locations = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   locMap = Object.fromEntries(locations.map(l => [l.id, l]));
 }
@@ -1239,7 +1264,7 @@ $("#mySchMode").onclick = e => {
 
 /* ================= 員工管理（管理者） ================= */
 async function loadEmployees() {
-  const snap = await getDocs(collection(db, "employees"));
+  const snap = await collDocs("employees");
   employees = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (a.empNo || "zzz").localeCompare(b.empNo || "zzz") || (a.name || "").localeCompare(b.name || ""));
 }
@@ -1719,7 +1744,7 @@ async function loadScheduling() {
   const month = $("#schMonth").value;
   await Promise.all([loadEmployees(), loadShiftTypes()]);
   const [snap, rSnap] = await Promise.all([
-    getDocs(query(collection(db, "schedules"), where("month", "==", month))),
+    monthDocs("schedules", month),
     getDoc(doc(db, "rosters", month))
   ]);
   schedMap = {};
@@ -1967,12 +1992,25 @@ async function onCellClick(e, cell) {
 
 // ---- 歷史排班（推薦用）----
 let history = { month: null, list: [] };
+// 過去月份的班表存在本機（不常變動），只有沒存過的月份才去讀，省大量讀取
+const SHIST_KEY = "punch_sched_hist_v1";
 async function loadHistory(month) {
   if (history.month === month) return;
   const [y, m] = month.split("-").map(Number);
   const months = [1, 2, 3, 4, 5, 6].map(i => ym(new Date(y, m - 1 - i, 1)));
-  const snap = await getDocs(query(collection(db, "schedules"), where("month", "in", months)));
-  history = { month, list: snap.docs.map(d => d.data()) };
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem(SHIST_KEY) || "{}"); } catch {}
+  const cur = ym(new Date());
+  // 上個月以後的仍可能被修改，6 小時後重讀；更早的月份讀過就不再讀
+  const need = months.filter(mm => !store[mm] || (mm >= prevMonth(cur) && Date.now() - (store[mm].at || 0) > 6 * 3600e3));
+  if (need.length) {
+    const snap = await getDocs(query(collection(db, "schedules"), where("month", "in", need)));
+    need.forEach(mm => store[mm] = { at: Date.now(), rows: [] });
+    snap.docs.forEach(d => { const x = d.data(); store[x.month]?.rows.push([x.empId, x.date, x.shiftIds || []]); });
+    Object.keys(store).forEach(k => { if (k < months.at(-1)) delete store[k]; });
+    try { localStorage.setItem(SHIST_KEY, JSON.stringify(store)); } catch {}
+  }
+  history = { month, list: months.flatMap(mm => (store[mm]?.rows || []).map(([empId, date, shiftIds]) => ({ empId, date, shiftIds }))) };
 }
 const wdOf = ds => new Date(ds + "T00:00:00").getDay();
 const empName = id => employees.find(u => u.id === id)?.name || "";
@@ -2913,8 +2951,8 @@ async function loadReport() {
   const month = $("#repMonth").value;
   await Promise.all([loadEmployees(), loadShiftTypes(), loadLocations()]);
   const [attSnap, schSnap] = await Promise.all([
-    getDocs(query(collection(db, "attendance"), where("month", "==", month))),
-    getDocs(query(collection(db, "schedules"), where("month", "==", month)))
+    monthDocs("attendance", month),
+    monthDocs("schedules", month)
   ]);
   const recs = attSnap.docs.map(toRec);
   const sch = {};
@@ -3055,8 +3093,8 @@ async function loadPayroll() {
   if (pay.tab === "rates") return renderRates();
 
   const [attSnap, schSnap, cfgSnap, confSnap, slipSnap] = await Promise.all([
-    getDocs(query(collection(db, "attendance"), where("month", "==", month))),
-    getDocs(query(collection(db, "schedules"), where("month", "==", month))),
+    monthDocs("attendance", month),
+    monthDocs("schedules", month),
     getDoc(doc(db, "payroll", month)),
     getDocs(query(collection(db, "payConfirm"), where("month", "==", month))).catch(() => null),
     getDocs(query(collection(db, "payslips"), where("month", "==", month))).catch(() => null)
