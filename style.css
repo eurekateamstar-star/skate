@@ -501,6 +501,7 @@ details.card[open] summary::after{transform:rotate(-135deg)}
 .dlg-btns button.primary{font-weight:600}
 .dlg-btns button.danger{color:var(--red);font-weight:600}
 .dlg-btns.col{flex-direction:column}
+.dlg-btns.col button{flex:none;height:50px;width:100%}
 .dlg-btns.col button + button{border-left:0;border-top:1px solid var(--sep)}
 
 /* ---------- App 質感：轉場、點擊回饋 ---------- */

@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=62";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=63";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -3822,7 +3822,8 @@ $("#mpList").onclick = async e => {
   const cur = issues[it.key];
   const res = await appDialog({ title: "這堂有問題", message: `${dayLabel(it.date)}　${it.name}\n打卡：${it.inT || "--:--"} → ${it.outT || "--:--"}（${MP_ST[it.st]?.[1] || ""}）`,
     input: { type: "text", placeholder: "例：有上班但忘了打下班卡、實際 16:00–17:30", value: cur?.note || "" },
-    buttons: [{ text: "取消", value: false }, ...(cur ? [{ text: "取消回報", value: "del", style: "danger" }] : []), { text: cur ? "更新" : "回報", value: true, style: "primary" }] });
+    buttons: cur ? [{ text: "更新說明", value: true, style: "primary" }, { text: "取消回報", value: "del", style: "danger" }, { text: "關閉", value: false }]
+      : [{ text: "取消", value: false }, { text: "回報", value: true, style: "primary" }] });
   if (res === false) return;
   if (res === "del") delete issues[it.key];
   else { if (!String(res).trim()) return toast("請寫一下哪裡有問題"); issues[it.key] = { date: it.date, name: it.name, sid: it.sid || "", note: String(res).trim() }; }
