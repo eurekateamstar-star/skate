@@ -414,7 +414,7 @@ async function notifyNew(env, coll, id) {
   const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
   const msg = coll === "leaveRequests"
     ? card("📝 新的請假申請", `${q.name}　${String(q.date).slice(5)} ${q.leaveType}`, `${(q.shiftNames || []).join("、")}${q.reason ? `\n原因：${q.reason}` : ""}${q.subName ? `\n代班：${q.subName}` : ""}`, "前往審核", `${LIFF}?view=approvals`)
-    : card("➕ 申請加入班表", `${q.name}　${String(q.date).slice(5)}`, `${q.shiftName}\n（班表沒排到，已先打卡）`, "前往審核", `${LIFF}?view=approvals`, "#ff9500");
+    : card("➕ 申請加入班表", `${q.name}　${String(q.date).slice(5)}`, `${q.shiftName}\n班表沒排到，核准加入班表後才能打卡`, "前往審核", `${LIFF}?view=approvals`, "#ff9500");
   const admins = (await fs.where("employees", "role", "admin")).filter(e => e.active !== false && String(e.lineUid || "").startsWith("line:"));
   for (const a of admins) await push(env, a.lineUid.slice(5), msg).catch(() => {});
   return { ok: true, sent: admins.length };
