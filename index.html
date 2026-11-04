@@ -21,7 +21,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=64">
+  <link rel="stylesheet" href="style.css?v=65">
 </head>
 <body>
 
@@ -100,6 +100,7 @@
       <a data-view="mypay"><svg class="ic"><use href="#i-money"/></svg>我的薪資</a>
       <div class="admin-only hidden">
         <div class="nav-title">管理者專區</div>
+        <a data-view="today"><svg class="ic"><use href="#i-users"/></svg>今日上班</a>
         <a data-view="approvals"><svg class="ic"><use href="#i-check"/></svg>簽核中心<span class="nav-badge hidden" id="apBadge"></span></a>
         <a data-view="scheduling"><svg class="ic"><use href="#i-grid"/></svg>排班作業</a>
         <a data-view="report"><svg class="ic"><use href="#i-chart"/></svg>出勤報表</a>
@@ -159,10 +160,24 @@
         <div id="apList"></div>
       </section>
 
+      <!-- 今日上班（管理者） -->
+      <section id="view-today" class="view hidden">
+        <div class="view-head">
+          <div class="vh-title"><h2>今日上班</h2><div class="vh-sub" id="tdSub">今天每個班別有誰、打卡了沒</div></div>
+        </div>
+        <div class="card td-nav">
+          <button class="icon-btn" id="tdPrev"><svg class="ic"><use href="#i-left"/></svg></button>
+          <div class="td-date"><b id="tdTitle"></b><button class="btn link" id="tdToday">回到今天</button></div>
+          <button class="icon-btn" id="tdNext"><svg class="ic"><use href="#i-right"/></svg></button>
+        </div>
+        <div class="td-stats" id="tdStats"></div>
+        <div id="tdList"></div>
+      </section>
+
       <!-- 我的薪資 -->
       <section id="view-mypay" class="view hidden">
         <div class="view-head">
-          <div class="vh-title"><h2>我的薪資</h2><div class="vh-sub">核對這個月的打卡明細；管理者結算發布後會顯示薪資</div></div>
+          <div class="vh-title"><h2>我的薪資</h2><div class="vh-sub">每月 1 號開放核對上個月的打卡明細；管理者結算發布後會顯示薪資</div></div>
           <div class="vh-actions"><input type="month" id="mpMonth"></div>
         </div>
         <div class="card mp-pay" id="mpPay"></div>
@@ -541,6 +556,7 @@
     <div class="sheet-handle"></div>
     <div class="sheet-title">管理者專區</div>
     <div class="sheet-grid">
+      <a data-view="today"><svg class="ic"><use href="#i-users"/></svg>今日上班</a>
       <a data-view="approvals"><svg class="ic"><use href="#i-check"/></svg>簽核中心<span class="tab-badge hidden" id="apBadge3"></span></a>
       <a data-view="scheduling"><svg class="ic"><use href="#i-grid"/></svg>排班作業</a>
       <a data-view="report"><svg class="ic"><use href="#i-chart"/></svg>出勤報表</a>
@@ -764,6 +780,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=64"></script>
+<script type="module" src="app.js?v=65"></script>
 </body>
 </html>

@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=64";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=65";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -476,14 +476,15 @@ const loaders = {
   payroll: loadPayroll,
   mypay: loadMyPay,
   leave: loadLeaveView,
-  approvals: loadApprovals
+  approvals: loadApprovals,
+  today: loadTodayView
 };
 const TITLES = {
   clock: "打卡", records: "出勤紀錄", mySchedule: "我的班表", scheduling: "排班作業",
   report: "出勤報表", employees: "員工管理", shifts: "班別設定", payroll: "薪資計算",
-  leave: "請假", approvals: "簽核中心", mypay: "我的薪資"
+  leave: "請假", approvals: "簽核中心", mypay: "我的薪資", today: "今日上班"
 };
-const ADMIN_VIEWS = ["approvals", "scheduling", "report", "payroll", "employees", "shifts"];
+const ADMIN_VIEWS = ["today", "approvals", "scheduling", "report", "payroll", "employees", "shifts"];
 function showView(name) {
   $$(".view").forEach(v => v.classList.add("hidden"));
   $(`#view-${name}`).classList.remove("hidden");
@@ -525,6 +526,7 @@ new MutationObserver(muts => {
 
 const thisMonth = ym(new Date());
 ["#recMonth", "#mySchMonth", "#schMonth", "#repMonth", "#payMonth", "#mpMonth"].forEach(s => $(s).value = thisMonth);
+$("#mpMonth").value = prevMonth(thisMonth);   // 我的薪資：預設上個月（本月要下個月 1 號才開放）
 $("#recMonth").onchange = () => loadRecords();
 $("#mySchMonth").onchange = () => loadMySchedule();
 $("#schMonth").onchange = () => loadScheduling();
@@ -2838,6 +2840,66 @@ $("#lvList").onclick = async e => {
   catch (err) { toast("取消失敗：" + errMsg(err)); }
 };
 
+
+/* ================= 今日上班（管理者） ================= */
+let td = { date: null };
+async function loadTodayView() {
+  td.date ??= ymd(new Date());
+  const d = new Date(td.date + "T00:00:00"), isToday = td.date === ymd(new Date());
+  $("#tdTitle").textContent = `${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}${isToday ? "（今天）" : ""}`;
+  $("#tdToday").classList.toggle("hidden", isToday);
+  $("#tdList").innerHTML = `<div class="card empty-card">讀取中…</div>`;
+  const date = td.date;
+  const [schSnap, attSnap] = await Promise.all([
+    getDocs(query(collection(db, "schedules"), where("date", "==", date))),
+    getDocs(query(collection(db, "attendance"), where("date", "==", date))),
+    employees.length ? null : loadEmployees(), Object.keys(shiftMap).length ? null : loadShiftTypes()
+  ]);
+  if (date !== td.date) return;
+  const recs = attSnap.docs.map(toRec);
+  const empBy = Object.fromEntries(employees.map(u => [u.id, u]));
+  const groups = {};   // shiftId -> [{u, leave, inR, outR}]
+  schSnap.forEach(x => {
+    const v = x.data(), u = empBy[v.empId];
+    if (!u || u.active === false) return;
+    (v.shiftIds || []).forEach(sid => {
+      const s = shiftMap[sid]; if (!s || s.cat === "leave") return;
+      const mine = recs.filter(r => r.empId === v.empId && r.shiftId === sid);
+      (groups[sid] ??= []).push({ u, leave: v.leave?.[sid], inR: mine.filter(r => r.type === "in").sort((a, b) => a.t - b.t)[0], outR: mine.filter(r => r.type === "out").sort((a, b) => b.t - a.t)[0] });
+    });
+  });
+  const now = isToday ? nowMin() : (td.date < ymd(new Date()) ? 99999 : -1);
+  const people = new Set(), cnt = { work: 0, done: 0, late: 0, miss: 0, leave: 0 };
+  const status = (p, s) => {
+    const st = toMin(s.start), en = toMin(s.end);
+    if (p.leave) { cnt.leave++; return [`<span class="tag">請假・${esc(p.leave)}</span>`, "leave"]; }
+    if (p.inR && p.outR) { cnt.done++; return [`<span class="tag ok">已下班 ${hm(p.outR.t)}</span>`, "done"]; }
+    if (p.inR) { const late = st != null && minOf(hm(p.inR.t)) > st; if (late) cnt.late++; cnt.work++; return [`<span class="tag ${late ? "warn" : "blue"}">上班中 ${hm(p.inR.t)}${late ? "・遲到" : ""}</span>`, "on"]; }
+    if (st != null && now > st) { cnt.miss++; return [`<span class="tag bad">${now > (en ?? st) ? "未打卡" : `未到・已過 ${now - st} 分`}</span>`, "miss"]; }
+    return [`<span class="tag muted">${st != null && now >= 0 ? `${st - now > 0 ? `${st - now} 分後上班` : "還沒到"}` : "還沒上班"}</span>`, "wait"];
+  };
+  const ids = byTime(Object.keys(groups));
+  const colors = ["#0a84ff", "#30d158", "#ff9f0a", "#bf5af2", "#ff375f", "#64d2ff", "#ac8e68"];
+  const av = u => u.linePicture ? `<img class="emp-av sm" src="${esc(u.linePicture)}" alt="">`
+    : `<span class="emp-av sm" style="background:${colors[[...String(u.name || u.id)].reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length]}">${esc((u.name || "?").slice(-2))}</span>`;
+  $("#tdList").innerHTML = ids.map(sid => {
+    const s = shiftMap[sid], list = groups[sid].sort((a, b) => (a.u.empNo || "").localeCompare(b.u.empNo || ""));
+    const nowShift = isToday && toMin(s.start) != null && now >= toMin(s.start) && now <= toMin(s.end);
+    return `<div class="card td-shift ${nowShift ? "now" : ""}">
+      <div class="td-sh-head"><span class="sh-bar-c" style="background:${esc(s.color || "#8e8e93")}"></span>
+        <span><b>${esc(s.name)}</b><small>${s.start && s.end ? `${s.start}–${s.end}` : ""}${nowShift ? `<em>進行中</em>` : ""}</small></span><span class="td-n">${list.length} 人</span></div>
+      ${list.map(p => { people.add(p.u.id); const [tag, cls] = status(p, s); return `<div class="td-person ${cls}">${av(p.u)}<b>${esc(p.u.name)}</b>${tag}</div>`; }).join("")}
+    </div>`;
+  }).join("") || `<div class="card empty-card">這天沒有人排班</div>`;
+  $("#tdSub").textContent = `${people.size} 人上班・${ids.length} 個班別`;
+  $("#tdStats").innerHTML = `<div class="stat"><b>${people.size}</b>上班人數</div><div class="stat"><b>${cnt.work}</b>上班中</div>
+    <div class="stat"><b class="${cnt.miss ? "red" : ""}">${cnt.miss}</b>未打卡</div><div class="stat"><b>${cnt.leave}</b>請假</div>`;
+}
+const tdMove = n => { const d = new Date(td.date + "T00:00:00"); d.setDate(d.getDate() + n); td.date = ymd(d); loadTodayView(); };
+$("#tdPrev").onclick = () => tdMove(-1);
+$("#tdNext").onclick = () => tdMove(1);
+$("#tdToday").onclick = () => { td.date = ymd(new Date()); loadTodayView(); };
+
 /* ================= 簽核中心（管理者） ================= */
 let ap = { tab: "leave", leave: [], punch: [], shift: [], done: [] };
 async function fetchPending() {
@@ -3575,6 +3637,19 @@ let mp = { month: null };
 async function loadMyPay() {
   const month = $("#mpMonth").value;
   mp.month = month;
+  // 本月（還沒結束）的打卡明細要到下個月 1 號才開放核對
+  if (month >= ym(new Date())) {
+    const [y, m] = month.split("-").map(Number);
+    const open = new Date(y, m, 1);
+    $("#mpPay").innerHTML = `<div class="mp-head"><span>${y}年${m}月 薪資</span><span class="tag muted">未結算</span></div>
+      <div class="mp-total none">未結算薪資</div>
+      <p class="hint" style="margin:6px 0 0">${m} 月還沒結束，打卡明細將於 <b>${open.getMonth() + 1}/${open.getDate()}</b> 開放核對。</p>`;
+    $("#mpConfirm").innerHTML = `<button class="btn mp-okbtn" id="mpPrevBtn">查看上個月的薪資與明細</button>`;
+    $("#mpListTitle").textContent = ""; $("#mpList").innerHTML = "";
+    $("#mpList").classList.add("hidden");
+    return;
+  }
+  $("#mpList").classList.remove("hidden");
   $("#mpPay").innerHTML = `<p class="hint" style="margin:0">讀取中…</p>`;
   const [att, sch, slip, conf] = await Promise.all([
     getDocs(query(collection(db, "attendance"), where("empId", "==", me.id), where("month", "==", month))),
@@ -3837,6 +3912,7 @@ $("#mpList").onclick = async e => {
   } catch (err) { appAlert("送出失敗", errMsg(err) + (err.code === "permission-denied" ? "\n請管理者更新 firestore.rules。" : "")); }
 };
 $("#mpConfirm").onclick = async e => {
+  if (e.target.id === "mpPrevBtn") { $("#mpMonth").value = prevMonth(mp.month); return loadMyPay(); }
   const b = e.target.closest("[data-mp]"); if (!b) return;
   const n = Object.keys(mp.conf?.issues || {}).length;
   if (n && !(await appConfirm("確認無誤", `你有 ${n} 堂回報過問題，確認無誤會把這些回報清掉。`, { okText: "確認無誤" }))) return;
