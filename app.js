@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=95";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=96";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -571,9 +571,11 @@ function showView(name) {
   const t = setTimeout(() => { if (seq === loadSeq) document.body.classList.add("is-loading"); }, 300);
   // 超過 5 秒還沒好 → 顯示重新整理提示
   const t5 = setTimeout(() => { if (seq === loadSeq) document.body.classList.add("is-slow"); }, 5000);
+  // 超過 12 秒還沒好，多半是連線卡死 → 自動重新整理一次（等同手動關掉再開）
+  const t12 = setTimeout(() => { if (seq === loadSeq && document.body.classList.contains("is-loading") && !document.hidden) window.__autoReload?.(); }, 12000);
   document.body.classList.remove("is-slow");
   authReady.then(() => loaders[name]?.()).catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); })
-    .finally(() => { clearTimeout(t); clearTimeout(t5); if (seq === loadSeq) document.body.classList.remove("is-loading", "is-slow"); });
+    .finally(() => { clearTimeout(t); clearTimeout(t5); clearTimeout(t12); if (seq === loadSeq) document.body.classList.remove("is-loading", "is-slow"); });
 }
 let loadSeq = 0;
 $$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));

@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=95">
+  <link rel="stylesheet" href="style.css?v=96">
 </head>
 <body>
 
@@ -818,6 +818,27 @@
   </div>
 </div>
 <script>
+  // 卡住時自動重新整理（1 分鐘內最多一次，避免一直重整）
+  window.__autoReload = function () {
+    try {
+      var last = +sessionStorage.getItem("autoReloadAt") || 0;
+      if (Date.now() - last < 60000) return false;
+      sessionStorage.setItem("autoReloadAt", String(Date.now()));
+    } catch (e) { return false; }
+    location.reload();
+    return true;
+  };
+  // LINE 沒關掉、從背景切回來：頁面可能已經失去連線 → 離開超過 5 分鐘就重新載入（有開著的視窗就不動）
+  (function () {
+    var hiddenAt = 0;
+    var busy = function () { return document.querySelector(".modal-mask:not(.hidden), #dlg:not(.hidden)"); };
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > 5 * 60000 && !busy()) { try { sessionStorage.removeItem("autoReloadAt"); } catch (e) {} location.reload(); }
+      hiddenAt = 0;
+    });
+    addEventListener("pageshow", function (e) { if (e.persisted) location.reload(); });
+  })();
   // 看門狗：主程式若載入失敗或卡住，顯示原因與重新整理按鈕
   window.__errs = [];
   addEventListener("error", e => window.__errs.push((e.message || "") + " " + (e.filename || e.target?.src || "")), true);
@@ -825,6 +846,10 @@
     var l = document.getElementById("authLoading"), a = document.getElementById("authSlow");
     if (l && a && !l.classList.contains("hidden") && !document.getElementById("appView").offsetParent) a.classList.remove("hidden");
   }, 5000);
+  setTimeout(() => {   // 登入卡超過 10 秒 → 自動重新整理一次
+    var l = document.getElementById("authLoading");
+    if (l && !l.classList.contains("hidden") && !document.getElementById("appView").offsetParent) window.__autoReload();
+  }, 10000);
   setTimeout(() => {
     var a = document.getElementById("authSlow"); if (a) a.classList.add("hidden");
     var l = document.getElementById("authLoading"), m = document.getElementById("authMsg");
@@ -835,6 +860,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=95"></script>
+<script type="module" src="app.js?v=96"></script>
 </body>
 </html>
