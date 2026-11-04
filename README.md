@@ -1,5 +1,7 @@
 # ⏱ 打卡系統（LINE 登入版）
 
+網站：https://wild-horses-skating.pages.dev （Cloudflare Pages，推上 GitHub main 會自動部署）
+
 HTML + JavaScript + Firebase，網頁放 GitHub Pages，LINE 身分驗證交給 Cloudflare Worker（免費）。
 
 ```
