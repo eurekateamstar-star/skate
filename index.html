@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=91">
+  <link rel="stylesheet" href="style.css?v=92">
 </head>
 <body>
 
@@ -79,13 +79,16 @@
 
     <p class="loading" id="authLoading"><span class="spinner"></span>載入中…</p>
     <p class="msg" id="authMsg"></p>
+    <div class="slow-tip auth-slow hidden" id="authSlow"><b>載入比較久…</b><span>網路可能不穩，可以重新整理看看<br>還是不行請關掉 LINE 再打開</span><button class="btn primary" onclick="location.reload()">重新整理</button></div>
   </div>
 </div>
 
 <!-- ========== 主畫面 ========== -->
 <div id="appView" class="hidden">
   <div class="load-bar"></div>
-  <div class="load-spin"><span class="spinner"></span></div>
+  <div class="load-spin"><span class="spinner"></span>
+    <div class="slow-tip"><b>載入比較久…</b><span>網路可能不穩，可以重新整理看看<br>還是不行請關掉 LINE 再打開</span><button class="btn primary" onclick="location.reload()">重新整理</button></div>
+  </div>
   <header class="topbar">
     <div class="brand"><img class="brand-ic" src="logo-mark.png" alt="野馬溜冰"><span id="pageTitle">打卡系統</span></div>
     <div class="user">
@@ -789,6 +792,11 @@
   window.__errs = [];
   addEventListener("error", e => window.__errs.push((e.message || "") + " " + (e.filename || e.target?.src || "")), true);
   setTimeout(() => {
+    var l = document.getElementById("authLoading"), a = document.getElementById("authSlow");
+    if (l && a && !l.classList.contains("hidden") && !document.getElementById("appView").offsetParent) a.classList.remove("hidden");
+  }, 5000);
+  setTimeout(() => {
+    var a = document.getElementById("authSlow"); if (a) a.classList.add("hidden");
     var l = document.getElementById("authLoading"), m = document.getElementById("authMsg");
     if (l && !l.classList.contains("hidden") && !document.getElementById("appView").offsetParent) {
       l.classList.add("hidden");
@@ -797,6 +805,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=91"></script>
+<script type="module" src="app.js?v=92"></script>
 </body>
 </html>

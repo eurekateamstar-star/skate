@@ -1014,3 +1014,14 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none!i
 .palette .chip{touch-action:none}
 td.nowrap{white-space:nowrap}
 .drag-hint{margin:10px 4px 6px}
+
+/* 載入超過 5 秒的提示 */
+.load-spin{flex-direction:column;gap:14px}
+.slow-tip{display:none;flex-direction:column;align-items:center;gap:6px;text-align:center;background:#fff;border-radius:16px;padding:16px 20px;box-shadow:0 8px 30px rgba(0,0,0,.12);max-width:280px;pointer-events:auto}
+.slow-tip b{font-size:16px}
+.slow-tip span{font-size:13px;color:#6e6e73;line-height:1.6}
+.slow-tip .btn{margin-top:6px;min-width:140px}
+body.is-loading.is-slow .slow-tip{display:flex}
+body.is-loading.is-slow .load-spin{pointer-events:auto;background:rgba(242,242,247,.4)}
+.auth-slow{display:flex;margin:14px auto 0}
+.auth-slow.hidden{display:none}
