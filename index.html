@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=81">
+  <link rel="stylesheet" href="style.css?v=82">
 </head>
 <body>
 
@@ -85,6 +85,7 @@
 <!-- ========== 主畫面 ========== -->
 <div id="appView" class="hidden">
   <div class="load-bar"></div>
+  <div class="load-spin"><span class="spinner"></span></div>
   <header class="topbar">
     <div class="brand"><img class="brand-ic" src="logo-mark.png" alt="野馬溜冰"><span id="pageTitle">打卡系統</span></div>
     <div class="user">
@@ -169,13 +170,13 @@
       <section id="view-today" class="view hidden">
         <div class="view-head">
           <div class="vh-title"><h2>今日上班</h2><div class="vh-sub" id="tdSub">今天每個班別有誰、打卡了沒</div></div>
+          <button class="share-mini" id="sharePunchBtn" title="分享打卡圖文給員工"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>分享</button>
         </div>
         <div class="card td-nav">
           <button class="icon-btn" id="tdPrev"><svg class="ic"><use href="#i-left"/></svg></button>
           <div class="td-date"><b id="tdTitle"></b><button class="btn link" id="tdToday">回到今天</button></div>
           <button class="icon-btn" id="tdNext"><svg class="ic"><use href="#i-right"/></svg></button>
         </div>
-        <button class="btn share-punch" id="sharePunchBtn"><span>📤 分享打卡圖文給員工</span><small>選 LINE 群組或好友，傳出圖文卡片，點了就能打卡</small></button>
         <div class="td-stats" id="tdStats"></div>
         <div id="tdList"></div>
       </section>
@@ -786,6 +787,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=81"></script>
+<script type="module" src="app.js?v=82"></script>
 </body>
 </html>

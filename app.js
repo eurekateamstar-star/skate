@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=81";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=82";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -168,6 +168,14 @@ const setMsg = m => $("#authMsg").textContent = m || "";
 let liffReady = null, liffErr = null;
 
 // 圖文選單深層連結：?view=records 或 LIFF 的 liff.state=?view=records
+// LINE 開啟時網址帶 liff.state，先自己轉成正常網址，避免之後 liff.init 重新整理頁面
+(() => {
+  const p = new URLSearchParams(location.search), st = p.get("liff.state");
+  if (st == null) return;
+  const q = new URLSearchParams(st.includes("?") ? st.split("?")[1] : st);
+  p.delete("liff.state"); q.forEach((v, k) => p.set(k, v));
+  window.history.replaceState(null, "", location.pathname + (p.toString() ? "?" + p : "") + location.hash);
+})();
 const START = (() => {
   const p = new URLSearchParams(location.search);
   let view = p.get("view"), mode = p.get("mode");
@@ -212,6 +220,7 @@ async function boot() {
     $("#loginView").classList.add("hidden");
     $("#appView").classList.remove("hidden");
     showView(firstView());
+    if (/ Line\//i.test(navigator.userAgent)) setTimeout(() => getLiff(), 600);   // 背景先準備 LINE 功能（分享用）
     const user = await authUser;
     if (user && user.uid === cache.uid) {
       const { claims } = await user.getIdTokenResult().catch(() => ({ claims: {} }));
