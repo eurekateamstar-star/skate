@@ -980,3 +980,7 @@ body.loading .load-bar{opacity:1}
 .td-person.miss{background:#fff8f7}
 .td-person.leave b{color:var(--muted)}
 @media (max-width:768px){ .td-stats{grid-template-columns:repeat(4,1fr);gap:6px} .td-person{padding:10px 12px} }
+/* 野馬 logo */
+img.brand-ic{width:30px;height:30px;border-radius:7px;background:none;object-fit:cover;display:block}
+.auth-logo{background:none;box-shadow:0 8px 20px rgba(200,16,46,.25)}
+.auth-logo img{width:100%;height:100%;border-radius:18px;display:block}
