@@ -74,8 +74,14 @@ export default {
         const nm = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
         const msg = rosterCard(nm, true, 6, "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9"));
         msg.altText = "（測試）" + msg.altText;
-        await push(env, uid.slice(5), msg);
-        return json({ ok: true, to: emp.name });
+        // 指定 toName 就發給那位員工（例如排班負責人），否則發給自己
+        let target = emp;
+        if (body.toName) {
+          target = (await new Firestore(env).where("employees", "name", String(body.toName))).find(e => e.active !== false && String(e.lineUid || "").startsWith("line:"));
+          if (!target) return json({ error: "找不到這位員工或還沒綁定 LINE" }, 404);
+        }
+        await push(env, target.lineUid.slice(5), msg);
+        return json({ ok: true, to: target.name });
       } catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
     // AI 快速排班：管理者貼上文字 → 回傳結構化的排班動作（只回傳預覽，不寫入資料庫）
