@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=67";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=68";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -861,16 +861,15 @@ $("#sharePunchBtn").onclick = async () => {
       { type: "text", text: "上班、下班都從這裡打卡；第一次使用請點自己的名字、輸入 Email 綁定。", size: "sm", color: "#86868b", wrap: true }] },
     footer: { type: "box", layout: "vertical", contents: [
       { type: "button", style: "primary", color: "#e8182c", action: { type: "uri", label: "我要打卡", uri: PUNCH_URL } }] } } };
+  if (me?.role !== "admin") return;
+  const ok = await getLiff();
+  if (!ok || !liff.isInClient?.()) return appAlert("請在 LINE 裡打開", "圖文卡片只能在 LINE 裡分享，請從 LINE 官方帳號的選單打開打卡系統再按一次。");
+  if (!liff.isApiAvailable?.("shareTargetPicker"))
+    return appAlert("還沒開啟分享功能", "請到 LINE Developers → LINE Login Channel → LIFF → 2012318362-VOU7aFr9，把「shareTargetPicker」打開並儲存，再回來按一次。");
   try {
-    if (await getLiff() && liff.isApiAvailable?.("shareTargetPicker")) {
-      const r = await liff.shareTargetPicker([flex]);
-      if (r) toast("已分享");
-      return;
-    }
-  } catch (e) { console.warn(e); }
-  if (navigator.share) { try { await navigator.share({ title: "野馬溜冰打卡系統", text: "點這裡上班・下班打卡", url: PUNCH_URL }); return; } catch {} }
-  try { await navigator.clipboard.writeText(PUNCH_URL); toast("已複製打卡連結，貼到 LINE 就好"); }
-  catch { appAlert("打卡連結", PUNCH_URL); }
+    const r = await liff.shareTargetPicker([flex]);
+    if (r) toast("已分享圖文卡片");
+  } catch (e) { appAlert("分享失敗", e.message || String(e)); }
 };
 $("#otFilter").oninput = renderOtherList;
 $("#otherModal").onclick = async e => {

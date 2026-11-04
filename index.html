@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=67">
+  <link rel="stylesheet" href="style.css?v=68">
 </head>
 <body>
 
@@ -125,7 +125,6 @@
         </div>
         <div class="card map-card hidden" id="mapCard"><div id="clockMap" class="mini-map"></div></div>
         <div id="shiftPunch"></div>
-        <button class="btn share-punch" id="sharePunchBtn"><span>📤 分享打卡連結給員工</span><small>傳到 LINE 群組或好友，點了就能打卡</small></button>
         <button class="btn other-punch" id="otherPunchBtn"><span>＋ 申請其他班別打卡</span><small>沒排到班、忘記加班表時使用，管理者核准後就能打卡</small></button>
       </section>
 
@@ -176,6 +175,7 @@
           <div class="td-date"><b id="tdTitle"></b><button class="btn link" id="tdToday">回到今天</button></div>
           <button class="icon-btn" id="tdNext"><svg class="ic"><use href="#i-right"/></svg></button>
         </div>
+        <button class="btn share-punch" id="sharePunchBtn"><span>📤 分享打卡圖文給員工</span><small>選 LINE 群組或好友，傳出圖文卡片，點了就能打卡</small></button>
         <div class="td-stats" id="tdStats"></div>
         <div id="tdList"></div>
       </section>
@@ -786,6 +786,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=67"></script>
+<script type="module" src="app.js?v=68"></script>
 </body>
 </html>
