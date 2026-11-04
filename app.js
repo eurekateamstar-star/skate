@@ -2313,7 +2313,10 @@ $("#aiGo").onclick = async () => {
   try {
     await Promise.all([loadEmployees(), loadShiftTypes()]);
     const month = $("#schMonth").value;
-    const emps = activeEmployees(), shifts = [...shiftTypes];
+    // 暑訓只在 7、8 月、寒訓只在 1、2 月，其他月份不給 AI 選，避免選錯
+    const mm = +month.slice(5);
+    const emps = activeEmployees(), shifts = shiftTypes.filter(s =>
+      !(/暑訓/.test(s.name) && ![7, 8].includes(mm)) && !(/寒訓/.test(s.name) && ![1, 2].includes(mm)));
     const token = await auth.currentUser.getIdToken();
     const r = await withTimeout(fetch(WORKER_URL.replace(/\/$/, "") + "/ai-schedule", {
       method: "POST", headers: { "Content-Type": "application/json" },
