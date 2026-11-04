@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=92">
+  <link rel="stylesheet" href="style.css?v=93">
 </head>
 <body>
 
@@ -281,6 +281,7 @@
             <button class="btn" id="rosterEditBtn">班表設定</button>
             <button class="btn" id="copyPrevBtn">複製上月</button>
             <button class="btn primary" id="publishBtn">發布</button>
+            <button class="btn ai-btn" id="aiSchBtn">✨ AI 快速排班</button>
           </div>
         </div>
 
@@ -611,6 +612,35 @@
     </div>
   </div>
 
+  <!-- AI 快速排班 -->
+  <div class="modal-mask hidden" id="aiModal">
+    <div class="modal">
+      <div class="modal-head">
+        <button class="btn link" data-close>取消</button>
+        <h3>✨ AI 快速排班</h3>
+        <button class="btn link strong" id="aiApply" disabled>套用</button>
+      </div>
+      <div class="modal-body">
+        <div id="aiStep1">
+          <div class="group">
+            <div class="field-head"><label>貼上排班訊息</label><span class="count">LINE 訊息直接複製貼上</span></div>
+            <textarea id="aiText" class="ai-text" rows="8" placeholder="例如：
+孫邦元 12月起 週三 1900-2030、六日 1600-1730
+阿翔教練 之後週六晨訓都不排
+李快 請假 12/13-12/21，麗山國小 12/15 音綺代課"></textarea>
+          </div>
+          <button class="btn primary ai-go" id="aiGo">✨ 分析並預覽</button>
+          <p class="hint">AI 只會先產生預覽，確認後按「套用」才會寫進班表（套用後一樣要按「發布」員工才看得到）。</p>
+        </div>
+        <div id="aiStep2" class="hidden">
+          <div class="ai-top"><button class="btn small" id="aiBack">← 修改訊息</button><span class="hint" id="aiSum" style="margin:0"></span></div>
+          <div id="aiNotes"></div>
+          <div id="aiList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 補打卡申請 -->
   <!-- 請假審核／修改（管理者） -->
   <div class="modal-mask hidden" id="lvModal">
@@ -805,6 +835,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=92"></script>
+<script type="module" src="app.js?v=93"></script>
 </body>
 </html>

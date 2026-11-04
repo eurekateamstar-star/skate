@@ -63,6 +63,20 @@ export default {
         return json(await notifyNew(env, body.coll, body.id));
       } catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
+    // AI 快速排班：管理者貼上文字 → 回傳結構化的排班動作（只回傳預覽，不寫入資料庫）
+    if (path === "/ai-schedule") {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const uid = await verifyFirebaseToken(body.token, env);
+        if (!uid) return json({ error: "unauthorized" }, 401);
+        const emp = await new Firestore(env).findByLineUid(uid);
+        if (!emp || emp.role !== "admin" || emp.active === false) return json({ error: "forbidden" }, 403);
+        if (!env.AI) return json({ error: "no_ai", message: "Worker 尚未綁定 Workers AI（變數名稱 AI）" }, 400);
+        const text = String(body.text || "").slice(0, 4000).trim();
+        if (!text) return json({ error: "empty" }, 400);
+        return json(await aiSchedule(env, text, body.ctx || {}));
+      } catch (e) { console.error(e); return json({ error: "server_error", message: String(e?.message || e) }, 500); }
+    }
     try {
       const body = await req.json().catch(() => ({}));
       const line = await verifyLine(body.idToken, env);
@@ -594,4 +608,79 @@ function card(title, shift, detail, label, uri, color = "#0071e3") {
 }
 async function push(env, to, message) {
   return lineApi(env, "/v2/bot/message/push", { method: "POST", body: JSON.stringify({ to, messages: [message] }) });
+}
+
+
+/* ---------- Firebase ID Token 驗證 ---------- */
+let fbKeys = null;
+async function verifyFirebaseToken(token, env) {
+  try {
+    const [h, p, sig] = String(token || "").split(".");
+    if (!sig) return null;
+    const dec = x => JSON.parse(new TextDecoder().decode(b64u(x)));
+    const head = dec(h), pay = dec(p), now = Date.now() / 1000;
+    const proj = env.FIREBASE_PROJECT_ID;
+    if (head.alg !== "RS256" || pay.aud !== proj || pay.iss !== "https://securetoken.google.com/" + proj || pay.exp < now || !pay.sub) return null;
+    if (!fbKeys || fbKeys.exp < Date.now()) {
+      const r = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+      fbKeys = { keys: (await r.json()).keys || [], exp: Date.now() + 3600_000 };
+    }
+    const jwk = fbKeys.keys.find(k => k.kid === head.kid);
+    if (!jwk) return null;
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64u(sig), new TextEncoder().encode(h + "." + p));
+    return ok ? pay.sub : null;
+  } catch { return null; }
+}
+function b64u(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "=";
+  return Uint8Array.from(atob(s), c => c.charCodeAt(0));
+}
+
+/* ---------- AI 排班解析（Workers AI） ---------- */
+const AI_MODELS = ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/qwen/qwen3-30b-a3b-fp8"];
+async function aiSchedule(env, text, ctx) {
+  const emps = (ctx.employees || []).slice(0, 200).map((e, i) => `E${i + 1}=${String(e.name || "").slice(0, 30)}`).join("\n");
+  const shifts = (ctx.shifts || []).slice(0, 300).map((s, i) =>
+    `S${i + 1}=${String(s.name || "").slice(0, 40)}${s.start && s.end ? `｜${s.start}-${s.end}` : ""}${s.cat === "leave" ? "｜休假類" : ""}`).join("\n");
+  const sys = `你是溜冰教練排班助理。把管理者貼上的中文訊息，轉成排班動作 JSON。只輸出 JSON，不要任何說明文字。
+
+今天：${ctx.today}（台灣）
+目前編輯的班表月份：${ctx.month}
+
+員工清單（代號=姓名）：
+${emps}
+
+班別清單（代號=名稱｜時間）：
+${shifts}
+
+輸出格式：
+{"actions":[{"op":"add 或 remove 或 clear","emp":"E代號","shift":"S代號或null","time":"HH:MM-HH:MM 或 null","dates":["YYYY-MM-DD"],"weekdays":[0到6],"from":"YYYY-MM-DD","to":"YYYY-MM-DD","reason":"10字內中文說明"}],"notes":["看不懂或需要管理者確認的地方"]}
+
+規則：
+- op：add=排入這個班；remove=取消這個人的這個班；clear=這些日期把這個人所有班都清掉（例如請假、不排班、離職）。
+- emp 用員工代號。訊息裡的稱呼可能是暱稱、少了姓氏或加了「教練」，請找最像的員工；完全找不到就不要輸出這個動作，寫進 notes。
+- shift 用班別代號。可依地點名稱（例如 迎風、麗山國小）、晨訓/夜訓、時間（0900-1030 = 09:00-10:30）比對；找不到班別就 shift 填 null 並把時間填在 time。
+- 日期：有明確日期就放 dates（例如 10/13 → 年份選離目前班表月份最近的那年）。日期區間（10/13-10/21）或「之後都」「每週」這種，用 weekdays（0=日,1=一,…,6=六）加 from/to。
+- 「X起」沒寫結束 → to 用目前班表月份的最後一天；沒寫開始 → from 用目前班表月份的第一天（若今天比較晚就用今天）。
+- 「預計」「再確認」的排班也照樣輸出，但在 reason 註明「待確認」。
+- 請假且有人代課：請假的人在那些日期用 clear（或指定班別就用 remove），代課的人用 add。
+- 費用、薪資等跟排班無關的資訊放進 notes。`;
+  let lastErr;
+  for (const model of AI_MODELS) {
+    try {
+      const r = await env.AI.run(model, {
+        messages: [{ role: "system", content: sys }, { role: "user", content: text }],
+        max_tokens: 3000, temperature: 0.1
+      });
+      let out = typeof r === "string" ? r : r?.response ?? r?.choices?.[0]?.message?.content ?? "";
+      if (typeof out !== "string") out = JSON.stringify(out);
+      out = out.replace(/<think>[\s\S]*?<\/think>/g, "");
+      const m = out.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("AI 沒有回傳 JSON");
+      const data = JSON.parse(m[0]);
+      return { model, actions: Array.isArray(data.actions) ? data.actions : [], notes: Array.isArray(data.notes) ? data.notes : [] };
+    } catch (e) { lastErr = e; console.error("ai", model, e); }
+  }
+  throw lastErr || new Error("AI 分析失敗");
 }

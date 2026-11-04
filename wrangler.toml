@@ -12,3 +12,7 @@ workers_dev = true
 # 每天台灣時間 08:00（UTC 00:00）把還沒審核的申請彙整通知管理者
 [triggers]
 crons = ["0 0 * * *"]
+
+# Workers AI（AI 快速排班用）
+[ai]
+binding = "AI"

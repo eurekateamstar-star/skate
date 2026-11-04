@@ -1025,3 +1025,27 @@ body.is-loading.is-slow .slow-tip{display:flex}
 body.is-loading.is-slow .load-spin{pointer-events:auto;background:rgba(242,242,247,.4)}
 .auth-slow{display:flex;margin:14px auto 0}
 .auth-slow.hidden{display:none}
+
+/* AI 快速排班 */
+.ai-btn{background:linear-gradient(135deg,#1d1d1f,#3a0d12);color:#fff;border:none}
+@media (max-width:768px){.vh-actions.three .ai-btn{grid-column:1/-1}}
+.ai-text{width:100%;box-sizing:border-box;border:1px solid var(--sep);border-radius:14px;padding:12px 14px;font:inherit;font-size:16px;line-height:1.6;resize:vertical;background:#fff;min-height:180px}
+.ai-go{width:100%;height:48px;margin-top:4px}
+.ai-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.ai-note{background:#fff7e6;border:1px solid #ffd591;color:#8a5a00;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.6;margin-bottom:10px}
+.ai-card{background:#fff;border-radius:16px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);border:1px solid transparent}
+.ai-card.off{opacity:.45}
+.ai-card.bad{border-color:#ffccc7}
+.ai-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ai-head input{width:20px;height:20px;flex:none}
+.ai-op{font-size:12px;font-weight:700;padding:2px 8px;border-radius:8px;color:#fff;flex:none}
+.ai-op.add{background:#34c759}.ai-op.remove{background:#ff3b30}.ai-op.clear{background:#8e8e93}
+.ai-who{font-weight:700;font-size:16px}
+.ai-why{font-size:12px;color:#6e6e73;margin:4px 0 0 28px}
+.ai-err{font-size:12px;color:#d70015;margin:4px 0 0 28px}
+.ai-dates{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0 28px}
+.ai-d{font-size:13px;padding:4px 9px;border-radius:9px;background:#e8f2ff;color:#0058b9;border:none;font-weight:600;cursor:pointer}
+.ai-d.off{background:#f2f2f7;color:#aeaeb2;text-decoration:line-through}
+.ai-d.skip{background:#f2f2f7;color:#8e8e93;cursor:default}
+.ai-d.clash{background:#ffecec;color:#d70015;cursor:default;text-decoration:line-through}
+.ai-legend{font-size:12px;color:#8e8e93;margin:2px 0 12px}

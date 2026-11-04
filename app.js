@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=92";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=93";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -2247,6 +2247,184 @@ $("#rosterSave").onclick = async () => {
     closeRoster();
     loadScheduling();
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
+};
+
+// ---- ✨ AI 快速排班：貼上訊息 → AI 解析 → 預覽 → 套用 ----
+let ai = null;   // { emps, shifts, acts:[{op, empId, sid, dates[], why, err, on, off:Set}], notes, base:{key:{ids,leave}} }
+const aiOpen = () => { $("#aiModal").classList.remove("hidden"); requestAnimationFrame(() => $("#aiModal").classList.add("open")); };
+const aiClose = () => { $("#aiModal").classList.remove("open"); setTimeout(() => $("#aiModal").classList.add("hidden"), 200); };
+const aiStep = n => { $("#aiStep1").classList.toggle("hidden", n !== 1); $("#aiStep2").classList.toggle("hidden", n !== 2); $("#aiApply").disabled = n !== 2; };
+$("#aiSchBtn").onclick = () => { aiStep(ai?.acts ? 2 : 1); aiOpen(); if (!ai?.acts) setTimeout(() => $("#aiText").focus(), 250); };
+$("#aiBack").onclick = () => aiStep(1);
+$("#aiModal").addEventListener("click", e => {
+  if (e.target.id === "aiModal" || e.target.closest("[data-close]")) return aiClose();
+  const d = e.target.closest("[data-ad]");
+  if (d && !d.classList.contains("skip") && !d.classList.contains("clash")) {
+    const a = ai.acts[+d.dataset.ai];
+    a.off.has(d.dataset.ad) ? a.off.delete(d.dataset.ad) : a.off.add(d.dataset.ad);
+    aiRender();
+  }
+});
+$("#aiList").addEventListener("change", e => { const c = e.target.closest("[data-aion]"); if (c) { ai.acts[+c.dataset.aion].on = c.checked; aiRender(); } });
+
+const aiNorm = s => String(s || "").replace(/\s|教練|老師|coach/gi, "").toLowerCase();
+function aiEmp(v, emps) {
+  const m = /^E(\d+)$/i.exec(String(v || "").trim());
+  if (m) return emps[+m[1] - 1] || null;
+  const n = aiNorm(v);
+  if (!n) return null;
+  return emps.find(e => aiNorm(e.name) === n) || emps.find(e => aiNorm(e.name).includes(n) || n.includes(aiNorm(e.name))) || null;
+}
+function aiShift(v, time, shifts) {
+  const m = /^S(\d+)$/i.exec(String(v || "").trim());
+  if (m && shifts[+m[1] - 1]) return shifts[+m[1] - 1];
+  if (v && !m) { const n = aiNorm(v); const hit = shifts.find(s => aiNorm(s.name) === n) || shifts.find(s => aiNorm(s.name).includes(n)); if (hit) return hit; }
+  const t = /(\d{1,2}):?(\d{2})\s*[-~～]\s*(\d{1,2}):?(\d{2})/.exec(String(time || ""));
+  if (t) {
+    const st = `${pad(+t[1])}:${t[2]}`, en = `${pad(+t[3])}:${t[4]}`;
+    return shifts.find(s => s.start === st && s.end === en) || null;
+  }
+  return null;
+}
+function aiDates(a, month) {
+  const isD = x => /^\d{4}-\d{2}-\d{2}$/.test(x || "");
+  const [y, m] = month.split("-").map(Number);
+  const first = `${month}-01`, last = `${month}-${pad(new Date(y, m, 0).getDate())}`;
+  const out = new Set((a.dates || []).filter(isD));
+  const wd = (a.weekdays || []).map(Number).filter(n => n >= 0 && n <= 6);
+  if (wd.length || isD(a.from) || isD(a.to)) {
+    if (wd.length || !out.size) {
+      const from = isD(a.from) ? a.from : first, to = isD(a.to) ? a.to : (isD(a.from) && !wd.length ? a.from : last);
+      const d = new Date(from + "T00:00:00"), end = new Date(to + "T00:00:00");
+      for (let i = 0; d <= end && i < 120; i++, d.setDate(d.getDate() + 1))
+        if (!wd.length || wd.includes(d.getDay())) out.add(ymd(d));
+    }
+  }
+  return [...out].sort();
+}
+
+$("#aiGo").onclick = async () => {
+  const text = $("#aiText").value.trim();
+  if (!text) return toast("請先貼上排班訊息");
+  const btn = $("#aiGo"), old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> AI 分析中…（約 5–20 秒）`;
+  try {
+    await Promise.all([loadEmployees(), loadShiftTypes()]);
+    const month = $("#schMonth").value;
+    const emps = activeEmployees(), shifts = [...shiftTypes];
+    const token = await auth.currentUser.getIdToken();
+    const r = await withTimeout(fetch(WORKER_URL.replace(/\/$/, "") + "/ai-schedule", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, text, ctx: { today: ymd(new Date()), month,
+        employees: emps.map(e => ({ name: e.name })), shifts: shifts.map(s => ({ name: s.name, start: s.start || "", end: s.end || "", cat: s.cat || "shift" })) } })
+    }), 60000);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.message || ({ unauthorized: "登入逾時，請重新整理", forbidden: "只有管理者可以使用", no_ai: "Worker 還沒開通 AI 功能" }[d.error]) || d.error || r.status);
+    const acts = (d.actions || []).map(a => {
+      const op = ["add", "remove", "clear"].includes(a.op) ? a.op : "add";
+      const emp = aiEmp(a.emp, emps), sh = op === "clear" ? null : aiShift(a.shift, a.time, shifts);
+      const dates = aiDates(a, month);
+      const err = !emp ? `找不到員工「${a.emp || "?"}」` : op !== "clear" && !sh ? `找不到班別${a.time ? `（${a.time}）` : a.shift ? `「${a.shift}」` : ""}，請先到班別設定新增` : !dates.length ? "沒有日期" : "";
+      return { op, empId: emp?.id, sid: sh?.id, dates, why: String(a.reason || "").slice(0, 60), err, on: !err, off: new Set() };
+    });
+    // 讀取這些日期目前的排班
+    const months = [...new Set(acts.flatMap(a => a.dates.map(x => x.slice(0, 7))))];
+    const base = {};
+    (await Promise.all(months.map(m => monthDocs("schedules", m)))).forEach(snap => snap.forEach(x => {
+      base[x.id] = { ids: x.data().shiftIds || [], leave: x.data().leave || {} };
+    }));
+    ai = { acts, notes: (d.notes || []).map(String), base };
+    aiRender();
+    aiStep(2);
+    if (!acts.length) toast("AI 沒有找到排班動作，可以把訊息寫清楚一點再試");
+  } catch (err) {
+    console.error(err);
+    toast("AI 分析失敗：" + errMsg(err));
+  } finally { btn.disabled = false; btn.innerHTML = old; }
+};
+
+// 依序模擬每個動作，算出每一天的結果
+function aiSim() {
+  const st = {}, res = [];
+  const get = k => st[k] || (st[k] = { ids: [...(ai.base[k]?.ids || [])], leave: ai.base[k]?.leave || {} });
+  ai.acts.forEach((a, i) => {
+    const r = {};
+    res[i] = r;
+    if (!a.on || a.err) return;
+    for (const ds of a.dates) {
+      if (a.off.has(ds)) { r[ds] = { s: "off" }; continue; }
+      const c = get(`${a.empId}_${ds}`);
+      if (a.op === "add") {
+        if (c.ids.includes(a.sid)) { r[ds] = { s: "skip", t: "已經有這個班" }; continue; }
+        const x = clashWith(a.sid, workIds(c.ids, c.leave));
+        if (x) { r[ds] = { s: "clash", t: `時段衝突：已排「${shiftMap[x]?.name}」` }; continue; }
+        c.ids.push(a.sid); r[ds] = { s: "ok" };
+      } else if (a.op === "remove") {
+        if (!c.ids.includes(a.sid)) { r[ds] = { s: "skip", t: "當天沒有這個班" }; continue; }
+        c.ids = c.ids.filter(x => x !== a.sid); r[ds] = { s: "ok" };
+      } else {
+        if (!c.ids.length) { r[ds] = { s: "skip", t: "當天沒有班" }; continue; }
+        r[ds] = { s: "ok", t: "清掉：" + c.ids.map(x => shiftMap[x]?.name).filter(Boolean).join("、") }; c.ids = [];
+      }
+    }
+  });
+  const changes = Object.entries(st).filter(([k, v]) => {
+    const o = ai.base[k]?.ids || [];
+    return o.length !== v.ids.length || o.some(x => !v.ids.includes(x));
+  });
+  return { res, changes };
+}
+
+function aiRender() {
+  const { res, changes } = aiSim();
+  const OP = { add: "新增", remove: "取消", clear: "清空" };
+  $("#aiNotes").innerHTML = ai.notes.map(n => `<div class="ai-note">💡 ${esc(n)}</div>`).join("");
+  $("#aiList").innerHTML = ai.acts.length ? `<div class="ai-legend">點日期可以排除那一天・灰色＝不用變・紅色＝時段衝突不會排入</div>` + ai.acts.map((a, i) => {
+    const r = res[i] || {};
+    const pills = a.dates.map(ds => {
+      const x = r[ds] || {}, d = new Date(ds + "T00:00:00");
+      const cls = !a.on || a.err ? "skip" : x.s === "off" ? "off" : x.s === "skip" ? "skip" : x.s === "clash" ? "clash" : "";
+      return `<button class="ai-d ${cls}" data-ai="${i}" data-ad="${ds}" title="${esc(x.t || "")}">${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）</button>`;
+    }).join("");
+    const md = ds => ds.slice(5).replace("-", "/").replace(/^0/, "").replace("/0", "/");
+    const clashes = Object.values(r).filter(x => x.s === "clash").map(x => x.t);
+    const cleared = Object.entries(r).filter(([, x]) => a.op === "clear" && x.s === "ok" && x.t).map(([ds, x]) => `${md(ds)} ${x.t}`);
+    return `<div class="ai-card ${a.on ? "" : "off"} ${a.err ? "bad" : ""}">
+      <label class="ai-head"><input type="checkbox" data-aion="${i}" ${a.on ? "checked" : ""} ${a.err ? "disabled" : ""}>
+        <span class="ai-op ${a.op}">${OP[a.op]}</span><span class="ai-who">${esc(empName(a.empId) || "？")}</span>${a.sid ? chipHtml(a.sid) : a.op === "clear" ? `<span class="hint" style="margin:0">當天所有班</span>` : ""}</label>
+      ${a.why ? `<div class="ai-why">${esc(a.why)}</div>` : ""}
+      ${a.err ? `<div class="ai-err">⚠️ ${esc(a.err)}</div>` : ""}
+      ${[...new Set(clashes)].slice(0, 3).map(t => `<div class="ai-err">${esc(t)}</div>`).join("")}
+      ${cleared.slice(0, 6).map(t => `<div class="ai-why">${esc(t)}</div>`).join("")}
+      <div class="ai-dates">${pills}</div></div>`;
+  }).join("") : `<p class="empty">沒有可以套用的排班</p>`;
+  const people = new Set(changes.map(([k]) => k.slice(0, k.lastIndexOf("_"))));
+  $("#aiSum").textContent = changes.length ? `將變更 ${people.size} 人・${changes.length} 天` : "目前沒有要變更的內容";
+  $("#aiApply").disabled = !changes.length;
+}
+
+$("#aiApply").onclick = async () => {
+  const { changes } = aiSim();
+  if (!changes.length) return;
+  const btn = $("#aiApply"); btn.disabled = true;
+  try {
+    for (let i = 0; i < changes.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const [key, v] of changes.slice(i, i + 400)) {
+        const j = key.lastIndexOf("_"), empId = key.slice(0, j), date = key.slice(j + 1);
+        if (v.ids.length || Object.keys(v.leave || {}).length)
+          batch.set(doc(db, "schedules", key), { empId, date, month: date.slice(0, 7), shiftIds: v.ids }, { merge: true });
+        else batch.delete(doc(db, "schedules", key));
+      }
+      await batch.commit();
+    }
+    const months = [...new Set(changes.map(([k]) => k.slice(k.lastIndexOf("_") + 1, k.lastIndexOf("_") + 8)))];
+    await Promise.all(months.map(m => setDoc(doc(db, "rosters", m), { editedAt: serverTimestamp() }, { merge: true }).catch(() => {})));
+    toast(`已套用 ${changes.length} 天的排班，記得按「發布」`);
+    ai = null; $("#aiText").value = "";
+    aiClose();
+    await loadScheduling();
+  } catch (err) { toast("套用失敗：" + errMsg(err)); btn.disabled = false; }
 };
 
 // ---- 發布 ----
