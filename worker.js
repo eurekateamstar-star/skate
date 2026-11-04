@@ -63,6 +63,21 @@ export default {
         return json(await notifyNew(env, body.coll, body.id));
       } catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
+    // 管理者測試：把「月底排班提醒」傳一則給自己看樣式
+    if (path === "/test-roster-remind") {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const uid = await verifyFirebaseToken(body.token, env);
+        const emp = uid && await new Firestore(env).findByLineUid(uid);
+        if (!emp || emp.role !== "admin") return json({ error: "forbidden" }, 403);
+        const tp = new Date(Date.now() + 8 * 3600e3), y = tp.getUTCFullYear(), m = tp.getUTCMonth() + 1;
+        const nm = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+        const msg = rosterCard(nm, true, 6, "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9"));
+        msg.altText = "（測試）" + msg.altText;
+        await push(env, uid.slice(5), msg);
+        return json({ ok: true, to: emp.name });
+      } catch (e) { return json({ error: String(e?.message || e) }, 500); }
+    }
     // AI 快速排班：管理者貼上文字 → 回傳結構化的排班動作（只回傳預覽，不寫入資料庫）
     if (path === "/ai-schedule") {
       try {
@@ -548,12 +563,7 @@ async function runReminders(env, manual = false, daily = false) {
       if (!r?.publishedAt) {
         const mark = (await fs.getPath(`reminders/${today}`)) || {};
         if (!mark.rosterSent || manual) {
-          const n = +nm.slice(5);
-          const state = !r ? "還沒建立" : "已經建立但還沒發布";
-          const left = last - d;
-          const msg = card(`📅 記得排 ${n} 月班表`, `${nm.slice(0, 4)}/${n}月班表${state}`,
-            `${ROSTER_REMIND_TO}，${left ? `再 ${left} 天就到 ${n} 月了` : `明天就是 ${n} 月了`}，記得排好班表並按「發布」，員工才看得到喔！`,
-            "前往排班", `${LIFF}?view=scheduling`, "#d70015");
+          const msg = rosterCard(nm, !r, last - d, LIFF);
           const who = (await fs.where("employees", "name", ROSTER_REMIND_TO)).find(e => e.active !== false && String(e.lineUid || "").startsWith("line:"));
           if (who) { await push(env, who.lineUid.slice(5), msg).catch(() => {}); result.roster = ROSTER_REMIND_TO; }
           else result.roster = `管理者 ${await toAdmins(msg)} 位`;
@@ -619,6 +629,12 @@ async function runReminders(env, manual = false, daily = false) {
   return result;
 }
 
+function rosterCard(nm, none, left, LIFF) {
+  const n = +nm.slice(5);
+  return card(`📅 記得排 ${n} 月班表`, `${nm.slice(0, 4)}/${n}月班表${none ? "還沒建立" : "已經建立但還沒發布"}`,
+    `${ROSTER_REMIND_TO}，${left ? `再 ${left} 天就到 ${n} 月了` : `明天就是 ${n} 月了`}，記得排好班表並按「發布」，員工才看得到喔！`,
+    "前往排班", `${LIFF}?view=scheduling`, "#d70015");
+}
 function card(title, shift, detail, label, uri, color = "#0071e3") {
   return {
     type: "flex", altText: `${title}：${shift}`,
