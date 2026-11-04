@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=79";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=80";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -856,7 +856,7 @@ $("#sharePunchBtn").onclick = async () => {
   const flex = { type: "flex", altText: "今天也要準時打卡｜野馬溜冰打卡系統", contents: {
     type: "bubble",
     styles: { hero: { backgroundColor: "#00000000" } },
-    hero: { type: "image", url: "https://wild-horses-skating.pages.dev/share-card.png?v=10", size: "full", aspectRatio: "1200:1084", aspectMode: "fit", action: { type: "uri", label: "我要打卡", uri: PUNCH_URL } } } };
+    hero: { type: "image", url: "https://wild-horses-skating.pages.dev/share-card.png?v=11", size: "full", aspectRatio: "1200:1105", aspectMode: "fit", action: { type: "uri", label: "我要打卡", uri: PUNCH_URL } } } };
   if (me?.role !== "admin") return;
   const ok = await getLiff();
   if (!ok || !liff.isInClient?.()) return appAlert("請在 LINE 裡打開", "圖文卡片只能在 LINE 裡分享，請從 LINE 官方帳號的選單打開打卡系統再按一次。");
