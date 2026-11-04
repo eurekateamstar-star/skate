@@ -998,3 +998,19 @@ img.brand-ic{width:30px;height:30px;border-radius:7px;background:none;object-fit
 .load-spin .spinner{width:38px;height:38px;border-width:4px;box-shadow:0 4px 18px rgba(0,0,0,.08);background:rgba(255,255,255,.85);border-radius:50%}
 body.is-loading .load-spin{opacity:1}
 #view-today .view-head{flex-wrap:nowrap!important}#view-today .vh-title{flex:1 1 auto!important;flex-basis:auto!important;min-width:0}
+/* 收合、拖曳 */
+.fold-head{display:flex;align-items:center;justify-content:space-between;width:100%;border:0;background:none;padding:6px 4px 10px;font:700 18px var(--font);color:var(--text);cursor:pointer;text-align:left}
+.fold-head small{font-size:13px;color:var(--muted);font-weight:500;margin-left:6px}
+.fold-ic{width:10px;height:10px;border-right:2.5px solid var(--muted);border-bottom:2.5px solid var(--muted);transform:rotate(45deg);transition:transform .2s;margin-right:6px}
+.fold-head.closed .fold-ic{transform:rotate(-45deg)}
+.folded{display:none!important}
+.pal-top{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.pal-top .filter{flex:0 1 260px}
+.pal-top .btn{margin-left:auto}
+.drag-h{cursor:grab;color:#b0b0b8;font-weight:700;letter-spacing:-2px;padding:4px 6px;user-select:none;touch-action:none;display:inline-block}
+.drag-h:active{cursor:grabbing}
+.dragging{opacity:.55;box-shadow:0 6px 18px rgba(0,0,0,.18)!important;background:var(--primary-l)!important}
+body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none!important}
+.palette .chip{touch-action:none}
+td.nowrap{white-space:nowrap}
+.drag-hint{margin:10px 4px 6px}

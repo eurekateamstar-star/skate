@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=90">
+  <link rel="stylesheet" href="style.css?v=91">
 </head>
 <body>
 
@@ -288,9 +288,12 @@
             <span id="schPickChip"></span>
           </div>
           <div class="palette-wrap desk-only">
-            <input id="schFilter" class="filter" placeholder="搜尋班別…">
+            <div class="pal-top"><input id="schFilter" class="filter" placeholder="搜尋班別…"><span class="hint" style="margin:0">拖曳班別可調整順序</span>
+              <button class="btn small" data-fold="palBody" id="palFoldBtn">收合</button></div>
+            <div id="palBody">
             <div class="pal-row"><span class="pal-label">班別</span><div class="palette" id="palShift"></div></div>
             <div class="pal-row"><span class="pal-label">休假</span><div class="palette" id="palLeave"></div></div>
+            </div>
           </div>
           <p class="hint desk-only">點格子會跳出班別選單（含推薦）；若上方先選好「快速排班」的班別，點格子會直接加入，適合大量排同一個班。</p>
           <div class="emp-row mob-only">
@@ -488,6 +491,8 @@
 
         <!-- 班別 -->
         <div id="shPaneShift">
+          <button class="fold-head desk-only" data-fold="shBody"><span>班別 <small id="shCount2"></small></span><i class="fold-ic"></i></button>
+          <div id="shBody">
           <div class="card desk-only">
             <h3>新增班別</h3>
             <form id="shiftForm" class="form-row">
@@ -521,9 +526,12 @@
             </div>
           </details>
         </div>
+        </div>
 
         <!-- 打卡地點 -->
         <div id="shPaneLoc" class="hidden">
+          <button class="fold-head" data-fold="locBody"><span>打卡地點 <small id="locCount"></small></span><i class="fold-ic"></i></button>
+          <div id="locBody">
           <div class="card">
             <h3>新增打卡地點</h3>
             <div class="loc-search">
@@ -541,7 +549,9 @@
             </form>
             <p class="hint">在地圖上點一下就能選位置。員工要在範圍內才能打卡；到「班別」分頁點班別，指定上班、下班的打卡地點。</p>
           </div>
+          <p class="hint drag-hint">按住左邊 ⋮⋮ 拖曳可調整順序</p>
           <div class="card sh-list" id="locList"></div>
+          </div>
         </div>
       </section>
     </main>
@@ -787,6 +797,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=90"></script>
+<script type="module" src="app.js?v=91"></script>
 </body>
 </html>

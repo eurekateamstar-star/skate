@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=90";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=91";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -124,6 +124,67 @@ addEventListener("resize", () => {
 
 // 班別依上班時間排序（沒設時間的放最後）
 const byTime = ids => [...(ids || [])].sort((a, b) => (shiftMap[a]?.start || "99:99").localeCompare(shiftMap[b]?.start || "99:99") || (shiftMap[a]?.end || "").localeCompare(shiftMap[b]?.end || ""));
+
+
+/* ---- 收合／展開（記住狀態）---- */
+const FOLD_KEY = "punch_fold_v1";
+let folds = {}; try { folds = JSON.parse(localStorage.getItem(FOLD_KEY) || "{}"); } catch {}
+function applyFold(id) {
+  const el = document.getElementById(id); if (!el) return;
+  const closed = !!folds[id]; el.classList.toggle("folded", closed);
+  $$(`[data-fold="${id}"]`).forEach(b => { b.classList.toggle("closed", closed); if (b.tagName === "BUTTON" && !b.classList.contains("fold-head")) b.textContent = closed ? "展開" : "收合"; });
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-fold]"); if (!b) return;
+  const id = b.dataset.fold; folds[id] = !folds[id];
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds)); } catch {}
+  applyFold(id);
+});
+["locBody", "shBody", "palBody"].forEach(id => setTimeout(() => applyFold(id)));
+
+/* ---- 拖曳排序（滑鼠、手指都可以）---- */
+let dragJustEnded = false;
+function sortable(container, itemSel, handleSel, onEnd) {
+  container.addEventListener("pointerdown", e => {
+    const h = handleSel ? e.target.closest(handleSel) : e.target.closest(itemSel);
+    if (!h || !container.contains(h) || e.button > 0) return;
+    const item = h.closest(itemSel); if (!item) return;
+    const sx = e.clientX, sy = e.clientY; let dragging = false;
+    const move = ev => {
+      if (!dragging) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+        dragging = true; item.classList.add("dragging"); document.body.classList.add("is-dragging");
+      }
+      ev.preventDefault();
+      item.style.pointerEvents = "none";
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(itemSel);
+      item.style.pointerEvents = "";
+      if (!over || over === item || over.parentNode !== item.parentNode) return;
+      const r = over.getBoundingClientRect();
+      const before = ev.clientY < r.top || (ev.clientY < r.bottom && (r.width > r.height * 3 ? ev.clientY < r.top + r.height / 2 : ev.clientX < r.left + r.width / 2));
+      over.parentNode.insertBefore(item, before ? over : over.nextSibling);
+    };
+    const up = () => {
+      removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", up);
+      if (!dragging) return;
+      item.classList.remove("dragging"); document.body.classList.remove("is-dragging");
+      dragJustEnded = true; setTimeout(() => dragJustEnded = false, 50);
+      onEnd([...item.parentNode.querySelectorAll(itemSel)].map(x => x.dataset.id || x.dataset.pick || x.dataset.sid));
+    };
+    addEventListener("pointermove", move, { passive: false }); addEventListener("pointerup", up); addEventListener("pointercancel", up);
+  });
+  container.addEventListener("click", e => { if (dragJustEnded) { e.stopPropagation(); e.preventDefault(); } }, true);
+}
+// 依新順序寫回 order（只改有變的）
+async function saveOrder(coll, list, ids) {
+  const all = list.map(x => x.id);
+  const pos = ids.map(id => all.indexOf(id)).filter(i => i >= 0).sort((a, b) => a - b);
+  pos.forEach((p, i) => all[p] = ids[i]);
+  const batch = writeBatch(db); let n = 0;
+  all.forEach((id, i) => { const x = list.find(y => y.id === id); const o = (i + 1) * 10; if (x && x.order !== o) { x.order = o; batch.update(doc(db, coll, id), { order: o }); n++; } });
+  list.sort((a, b) => all.indexOf(a.id) - all.indexOf(b.id));
+  if (n) await batch.commit().then(() => toast("已更新順序")).catch(err => toast("順序儲存失敗：" + errMsg(err)));
+}
 
 /* ================= 狀態 ================= */
 let me = null;          // 目前登入的員工 {id, name, empNo, role, ...}
@@ -572,7 +633,7 @@ const mapLink = r => r.lat != null
 let locations = [], locMap = {};
 async function loadLocations() {
   const snap = await collDocs("locations");
-  locations = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  locations = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order ?? 1e12) - (b.order ?? 1e12) || (a.name || "").localeCompare(b.name || ""));
   locMap = Object.fromEntries(locations.map(l => [l.id, l]));
 }
 function distM(a, b) {
@@ -1562,15 +1623,20 @@ async function renderShiftList() {
   const mob = isMob();
   $("#shPaneShift").classList.toggle("hidden", mob && shTab !== "shift");
   $("#shPaneLoc").classList.toggle("hidden", mob && shTab !== "loc");
-  renderLocList();
+  renderLocList(); locCountUpd();
   if (!mob || shTab === "loc") initLocMap();
   drawShiftRows();
+  const c2 = $("#shCount2"); if (c2) c2.textContent = `${shiftTypes.length} 個`;
 }
+sortable($("#shiftList"), "[data-id]", ".drag-h", async ids => {
+  await saveOrder("shiftTypes", shiftTypes, ids);
+  shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s])); writeCache(); drawShiftRows();
+});
 function drawShiftRowsDesk() {
   const locOpts = sel => `<option value="">不限地點</option>` + locations.map(l => `<option value="${l.id}" ${sel === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   $("#shiftList").innerHTML = `<table class="tbl"><thead><tr><th></th><th>代碼</th><th>類別</th><th>名稱</th><th>上班時間</th><th>下班時間</th><th>時數</th><th>打卡地點</th><th>顏色</th><th></th></tr></thead><tbody>` + (shiftTypes.length ? shiftTypes.map(s => `
     <tr data-id="${s.id}">
-      <td><input type="checkbox" class="s-chk"></td>
+      <td class="nowrap"><span class="drag-h" title="拖曳調整順序">⋮⋮</span><input type="checkbox" class="s-chk"></td>
       <td><input class="s-code" value="${esc(s.code || "")}" size="5"></td>
       <td><select class="s-cat"><option value="shift" ${s.cat !== "leave" ? "selected" : ""}>班別</option><option value="leave" ${s.cat === "leave" ? "selected" : ""}>休假</option></select></td>
       <td><input class="s-name" value="${esc(s.name)}" size="22"></td>
@@ -1601,7 +1667,7 @@ function drawShiftRows() {
       : `<span class="sh-loc">📍 ${esc(ln(s.locationId))}</span>`;
     const h = shiftHours(s);
     return `<div class="sh-row" data-id="${s.id}">
-      <input type="checkbox" class="s-chk">
+      <span class="drag-h" title="拖曳調整順序">⋮⋮</span><input type="checkbox" class="s-chk">
       <span class="sh-bar-c" style="background:${esc(s.color || "#8e8e93")}"></span>
       <span class="sh-main"><b>${esc(s.name)}</b>
         <small>${leave ? `<span class="tag muted">休假</span>` : s.start && s.end ? `<span class="sh-time">${esc(s.start)} – ${esc(s.end)}</span>${h ? `<span class="sh-h">${h}</span>` : ""}` : `<span class="sh-loc none">沒設時間</span>`}${s.code ? `<span class="sh-code">${esc(s.code)}</span>` : ""}</small>
@@ -1616,6 +1682,7 @@ $("#shSearch").oninput = drawShiftRows;
 $("#shFilter").onclick = e => { const b = e.target.closest("button[data-v]"); if (!b) return; shF = b.dataset.v; setSeg("#shFilter", shF); drawShiftRows(); };
 $("#shiftList").onclick = async e => {
   if (e.target.classList.contains("s-chk")) return updShSel();
+  if (e.target.closest(".drag-h")) return;
   const tr = e.target.closest("tr[data-id]");
   if (tr) {   // 電腦版表格：直接編輯
     const id = tr.dataset.id;
@@ -1707,24 +1774,27 @@ const boxOf = (lat, radius) => {
 function renderLocList() {
   if (!isMob()) {
     const usedN = id => shiftTypes.filter(s => s.locationId === id || s.outLocationId === id).length;
-    $("#locList").innerHTML = `<table class="tbl"><thead><tr><th>地點</th><th>座標</th><th>範圍（公尺）</th><th></th></tr></thead><tbody>` + (locations.map(l => `
+    $("#locList").innerHTML = `<table class="tbl"><thead><tr><th style="width:28px"></th><th>地點</th><th>座標</th><th>範圍（公尺）</th><th></th></tr></thead><tbody>` + (locations.map(l => `
       <tr data-id="${l.id}">
+        <td><span class="drag-h" title="拖曳調整順序">⋮⋮</span></td>
         <td><input class="l-name" value="${esc(l.name)}" size="14"></td>
         <td><a href="https://www.google.com/maps?q=${l.lat},${l.lng}" target="_blank" rel="noopener">${l.lat.toFixed(5)}, ${l.lng.toFixed(5)}</a><div class="emp-no">${usedN(l.id)} 個班別使用</div></td>
         <td><input class="l-radius" type="number" min="10" max="1000" value="${l.radius || 50}" style="width:80px"></td>
         <td><button class="btn small primary l-save">儲存</button> <button class="btn small danger l-del">刪除</button></td>
-      </tr>`).join("") || `<tr><td colspan="4" class="empty">尚未建立打卡地點</td></tr>`) + `</tbody></table>`;
+      </tr>`).join("") || `<tr><td colspan="5" class="empty">尚未建立打卡地點</td></tr>`) + `</tbody></table>`;
     return;
   }
   const used = id => shiftTypes.filter(x => x.locationId === id || x.outLocationId === id);
   $("#locList").innerHTML = locations.map(l => {
     const u = used(l.id);
     return `<div class="sh-row lc-row" data-id="${l.id}">
-      <span class="lc-pin">📍</span>
+      <span class="drag-h" title="拖曳調整順序">⋮⋮</span><span class="lc-pin">📍</span>
       <span class="sh-main"><b>${esc(l.name)}</b><small><span class="sh-time">範圍 ${l.radius || 50} 公尺</span><span class="${u.length ? "" : "sh-loc none"}">${u.length ? `${u.length} 個班別使用` : "還沒有班別使用"}</span></small></span>
       <span class="chev-r">›</span></div>`;
   }).join("") || `<p class="empty" style="padding:20px">尚未建立打卡地點</p>`;
 }
+const locCountUpd = () => { const el = $("#locCount"); if (el) el.textContent = `${locations.length} 個`; };
+sortable($("#locList"), "[data-id]", ".drag-h", async ids => { await saveOrder("locations", locations, ids); renderLocList(); locCountUpd(); });
 let lc = null;
 $("#locList").onclick = async e => {
   const tr = e.target.closest("tr[data-id]");
@@ -1739,6 +1809,7 @@ $("#locList").onclick = async e => {
     } catch (err) { toast("操作失敗：" + errMsg(err)); }
     return;
   }
+  if (e.target.closest(".drag-h")) return;
   const r = e.target.closest(".lc-row"); if (!r) return;
   const l = locMap[r.dataset.id]; lc = l;
   $("#lcName").value = l.name; $("#lcRadius").value = l.radius || 50; $("#lcRadiusV").textContent = `${l.radius || 50} 公尺`;
@@ -2017,6 +2088,11 @@ function renderPalette() {
   $("#palLeave").innerHTML = pal("leave");
 }
 $("#schFilter").oninput = renderPalette;
+["#palShift", "#palLeave"].forEach(sel => sortable($(sel), "[data-pick]", null, async ids => {
+  await saveOrder("shiftTypes", shiftTypes, ids);
+  shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s])); writeCache();
+  renderPalette(); syncPick();
+}));
 
 function syncPick() {
   $("#schPick").value = selShift || "";
