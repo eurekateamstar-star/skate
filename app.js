@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=94";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=95";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -2265,7 +2265,18 @@ $("#aiModal").addEventListener("click", e => {
     aiRender();
   }
 });
-$("#aiList").addEventListener("change", e => { const c = e.target.closest("[data-aion]"); if (c) { ai.acts[+c.dataset.aion].on = c.checked; aiRender(); } });
+$("#aiList").addEventListener("change", e => {
+  const c = e.target.closest("[data-aion]");
+  if (c) { ai.acts[+c.dataset.aion].on = c.checked; return aiRender(); }
+  const em = e.target.closest("[data-aiemp]"), sh = e.target.closest("[data-aish]");
+  if (!em && !sh) return;
+  const a = ai.acts[+(em || sh).dataset[em ? "aiemp" : "aish"]];
+  if (em) a.empId = em.value || null; else { a.sid = sh.value || null; a.warn = ""; }
+  // 手動改過就重新檢查，沒問題自動勾選
+  a.err = !a.empId ? "請選擇員工" : a.op !== "clear" && !a.sid ? "請選擇班別" : !a.dates.length ? "沒有日期" : "";
+  a.on = !a.err && !a.warn;
+  aiRender();
+});
 
 const aiNorm = s => String(s || "").replace(/\s|教練|老師|coach/gi, "").toLowerCase();
 function aiEmp(v, emps) {
@@ -2344,7 +2355,7 @@ $("#aiGo").onclick = async () => {
     }));
     const notes = (d.notes || []).map(String);
     if (outside) notes.push(`有些日期不在 ${month}，已略過；要排其他月份請先打開那個月的班表再用 AI 排班`);
-    ai = { acts, notes, base };
+    ai = { acts, notes, base, emps, shifts };
     aiRender();
     aiStep(2);
     if (!acts.length) toast("AI 沒有找到排班動作，可以把訊息寫清楚一點再試");
@@ -2390,7 +2401,7 @@ function aiRender() {
   const { res, changes } = aiSim();
   const OP = { add: "新增", remove: "取消", clear: "清空" };
   $("#aiNotes").innerHTML = ai.notes.map(n => `<div class="ai-note">💡 ${esc(n)}</div>`).join("");
-  $("#aiList").innerHTML = ai.acts.length ? `<div class="ai-legend">點日期可以排除那一天・灰色＝不用變・紅色＝時段衝突不會排入</div>` + ai.acts.map((a, i) => {
+  $("#aiList").innerHTML = ai.acts.length ? `<div class="ai-legend">AI 判斷錯可以直接點人名或課堂修改・點日期可以排除那一天・灰色＝不用變・紅色＝時段衝突不會排入</div>` + ai.acts.map((a, i) => {
     const r = res[i] || {};
     const pills = a.dates.map(ds => {
       const x = r[ds] || {}, d = new Date(ds + "T00:00:00");
@@ -2401,8 +2412,11 @@ function aiRender() {
     const clashes = Object.values(r).filter(x => x.s === "clash").map(x => x.t);
     const cleared = Object.entries(r).filter(([, x]) => a.op === "clear" && x.s === "ok" && x.t).map(([ds, x]) => `${md(ds)} ${x.t}`);
     return `<div class="ai-card ${a.on ? "" : "off"} ${a.err ? "bad" : ""}">
-      <label class="ai-head"><input type="checkbox" data-aion="${i}" ${a.on ? "checked" : ""} ${a.err ? "disabled" : ""}>
-        <span class="ai-op ${a.op}">${OP[a.op]}</span><span class="ai-who">${esc(empName(a.empId) || "？")}</span>${a.sid ? chipHtml(a.sid) : a.op === "clear" ? `<span class="hint" style="margin:0">當天所有班</span>` : ""}</label>
+      <div class="ai-head"><input type="checkbox" data-aion="${i}" ${a.on ? "checked" : ""} ${a.err ? "disabled" : ""}>
+        <span class="ai-op ${a.op}">${OP[a.op]}</span>
+        <select class="ai-sel ai-sel-emp" data-aiemp="${i}" title="點一下可以改人">${a.empId ? "" : `<option value="">選擇員工…</option>`}${ai.emps.map(e => `<option value="${e.id}" ${e.id === a.empId ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select>
+        ${a.op === "clear" ? `<span class="hint" style="margin:0">當天所有班</span>`
+          : `<select class="ai-sel ai-sel-sh" data-aish="${i}" title="點一下可以改課堂" style="background-color:${esc(shiftMap[a.sid]?.color || "#8e8e93")}">${a.sid ? "" : `<option value="">選擇班別…</option>`}${ai.shifts.map(sh => `<option value="${sh.id}" ${sh.id === a.sid ? "selected" : ""}>${esc(sh.name)}${sh.start && sh.end ? `（${sh.start}-${sh.end}）` : ""}</option>`).join("")}</select>`}</div>
       ${a.why ? `<div class="ai-why">${esc(a.why)}</div>` : ""}
       ${a.err ? `<div class="ai-err">⚠️ ${esc(a.err)}</div>` : ""}
       ${a.warn ? `<div class="ai-err">⚠️ ${esc(a.warn)}</div>` : ""}
