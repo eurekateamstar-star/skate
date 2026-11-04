@@ -638,7 +638,8 @@ function b64u(s) {
 }
 
 /* ---------- AI 排班解析（Workers AI） ---------- */
-const AI_MODELS = ["@cf/zai-org/glm-5.3-flash", "@cf/qwen/qwen3.8-27b", "@cf/deepseek-ai/deepseek-v4.1-flash-1017", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"];
+// 免費方案可用、中文好的模型（依序嘗試）
+const AI_MODELS = ["@cf/qwen/qwen3.8-27b", "@cf/zai-org/glm-4.7-flash", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"];
 async function aiSchedule(env, text, ctx, prefer) {
   const emps = (ctx.employees || []).slice(0, 200).map((e, i) => `E${i + 1}=${String(e.name || "").slice(0, 30)}`).join("\n");
   const shifts = (ctx.shifts || []).slice(0, 300).map((s, i) =>
@@ -676,7 +677,8 @@ ${shifts}
     try {
       const r = await env.AI.run(model, {
         messages: [{ role: "system", content: sys }, { role: "user", content: text }],
-        max_tokens: 3000, temperature: 0.1
+        max_tokens: 3000, temperature: 0.1,
+        ...(model.includes("llama") ? {} : { chat_template_kwargs: { enable_thinking: false } })
       });
       let out = typeof r === "string" ? r : r?.response ?? r?.choices?.[0]?.message?.content ?? "";
       if (typeof out !== "string") out = JSON.stringify(out);
