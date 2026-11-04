@@ -74,7 +74,7 @@ export default {
         if (!env.AI) return json({ error: "no_ai", message: "Worker 尚未綁定 Workers AI（變數名稱 AI）" }, 400);
         const text = String(body.text || "").slice(0, 4000).trim();
         if (!text) return json({ error: "empty" }, 400);
-        return json(await aiSchedule(env, text, body.ctx || {}));
+        return json(await aiSchedule(env, text, body.ctx || {}, body.model));
       } catch (e) { console.error(e); return json({ error: "server_error", message: String(e?.message || e) }, 500); }
     }
     try {
@@ -638,8 +638,8 @@ function b64u(s) {
 }
 
 /* ---------- AI 排班解析（Workers AI） ---------- */
-const AI_MODELS = ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/qwen/qwen3-30b-a3b-fp8"];
-async function aiSchedule(env, text, ctx) {
+const AI_MODELS = ["@cf/zai-org/glm-5.3-flash", "@cf/qwen/qwen3.8-27b", "@cf/deepseek-ai/deepseek-v4.1-flash-1017", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"];
+async function aiSchedule(env, text, ctx, prefer) {
   const emps = (ctx.employees || []).slice(0, 200).map((e, i) => `E${i + 1}=${String(e.name || "").slice(0, 30)}`).join("\n");
   const shifts = (ctx.shifts || []).slice(0, 300).map((s, i) =>
     `S${i + 1}=${String(s.name || "").slice(0, 40)}${s.start && s.end ? `｜${s.start}-${s.end}` : ""}${s.cat === "leave" ? "｜休假類" : ""}`).join("\n");
@@ -655,19 +655,24 @@ ${emps}
 ${shifts}
 
 輸出格式：
-{"actions":[{"op":"add 或 remove 或 clear","emp":"E代號","shift":"S代號或null","time":"HH:MM-HH:MM 或 null","dates":["YYYY-MM-DD"],"weekdays":[0到6],"from":"YYYY-MM-DD","to":"YYYY-MM-DD","reason":"10字內中文說明"}],"notes":["看不懂或需要管理者確認的地方"]}
+{"actions":[{"op":"add 或 remove 或 clear","emp":"E代號","shift":"S代號或null","time":"HH:MM-HH:MM 或 null","dates":["YYYY-MM-DD"],"weekdays":[0到6],"from":"YYYY-MM-DD","to":"YYYY-MM-DD","reason":"10字內繁體中文說明"}],"notes":["看不懂或需要管理者確認的地方（繁體中文）"]}
 
 規則：
-- op：add=排入這個班；remove=取消這個人的這個班；clear=這些日期把這個人所有班都清掉（例如請假、不排班、離職）。
+- op：add=排入這個班；remove=取消這個人的這個班；clear=這些日期把這個人所有班都清掉。
+- 只取消某一個班（例如「之後週六晨訓不排他」「取消週六晨訓」）→ 只輸出一個 remove，不要再加 clear。
+- 「都不排班」「請假」「離職」這種整天都不上 → clear。
 - emp 用員工代號。訊息裡的稱呼可能是暱稱、少了姓氏或加了「教練」，請找最像的員工；完全找不到就不要輸出這個動作，寫進 notes。
 - shift 用班別代號。可依地點名稱（例如 迎風、麗山國小）、晨訓/夜訓、時間（0900-1030 = 09:00-10:30）比對；找不到班別就 shift 填 null 並把時間填在 time。
 - 日期：有明確日期就放 dates（例如 10/13 → 年份選離目前班表月份最近的那年）。日期區間（10/13-10/21）或「之後都」「每週」這種，用 weekdays（0=日,1=一,…,6=六）加 from/to。
-- 「X起」沒寫結束 → to 用目前班表月份的最後一天；沒寫開始 → from 用目前班表月份的第一天（若今天比較晚就用今天）。
+- 只處理目前班表月份（${ctx.month}）：from 不可早於這個月第一天，to 不可晚於這個月最後一天。「X起」「之後都」就是整個月。
+- 同一個人、同一個 op、同一個班的多個星期幾，合併成一個動作（weekdays 放多個）。
 - 「預計」「再確認」的排班也照樣輸出，但在 reason 註明「待確認」。
 - 請假且有人代課：請假的人在那些日期用 clear（或指定班別就用 remove），代課的人用 add。
-- 費用、薪資等跟排班無關的資訊放進 notes。`;
+- 費用、薪資等跟排班無關的資訊放進 notes。
+- 所有文字都用繁體中文。`;
   let lastErr;
-  for (const model of AI_MODELS) {
+  const order = AI_MODELS.includes(prefer) ? [prefer, ...AI_MODELS.filter(m => m !== prefer)] : AI_MODELS;
+  for (const model of order) {
     try {
       const r = await env.AI.run(model, {
         messages: [{ role: "system", content: sys }, { role: "user", content: text }],
