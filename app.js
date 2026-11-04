@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=68";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=69";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -498,9 +498,9 @@ function showView(name) {
   if (name === "clock") renderClockCache();
   // 讀取超過 0.3 秒就在上方顯示進度條，不會看起來一片空白
   const seq = ++loadSeq;
-  const t = setTimeout(() => { if (seq === loadSeq) document.body.classList.add("loading"); }, 300);
+  const t = setTimeout(() => { if (seq === loadSeq) document.body.classList.add("is-loading"); }, 300);
   authReady.then(() => loaders[name]?.()).catch(err => { console.error(err); toast("載入失敗：" + errMsg(err)); })
-    .finally(() => { clearTimeout(t); if (seq === loadSeq) document.body.classList.remove("loading"); });
+    .finally(() => { clearTimeout(t); if (seq === loadSeq) document.body.classList.remove("is-loading"); });
 }
 let loadSeq = 0;
 $$("[data-view]").forEach(a => a.onclick = () => showView(a.dataset.view));
