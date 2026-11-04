@@ -984,3 +984,6 @@ body.loading .load-bar{opacity:1}
 img.brand-ic{width:30px;height:30px;border-radius:7px;background:none;object-fit:cover;display:block}
 .auth-logo{background:none;box-shadow:0 8px 20px rgba(200,16,46,.25)}
 .auth-logo img{width:100%;height:100%;border-radius:18px;display:block}
+.share-punch{width:100%;margin:4px 0 10px;padding:14px;height:auto;display:flex;flex-direction:column;gap:2px;border-radius:16px;background:#06c755;color:#fff;font-weight:600;font-size:15px;border:0}
+.share-punch small{font-weight:400;font-size:12.5px;opacity:.9}
+.share-punch:hover{background:#05b44c}
