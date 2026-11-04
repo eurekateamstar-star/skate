@@ -444,8 +444,11 @@ const NOTIFY = {
   leaveToAdmin: false,      // 改由員工送出時直接呼叫 /notify 即時通知（不用排程搜尋）
   dailyDigest: true,        // 每天早上 8:00：還沒審核的補打卡（及仍未處理的請假／加班）→ 一則彙整給管理者（都處理完就不發）
   shiftReminders: false,    // 上下班前後提醒員工（很耗訊息量，預設關閉）
-  employeeResults: false    // 審核結果、薪資發布、代班 → 通知員工（員工打開系統會跳出，預設不發 LINE）
+  employeeResults: false,   // 審核結果、薪資發布、代班 → 通知員工（員工打開系統會跳出，預設不發 LINE）
+  rosterReminder: true      // 月底下個月班表還沒發布 → 提醒排班的人（25 號、28 號、月底最後一天各一次，發布了就不發）
 };
+const ROSTER_REMIND_TO = "郭佩珊";        // 負責排班的人（員工姓名）；找不到或沒綁 LINE 就改發給所有管理者
+const ROSTER_REMIND_DAYS = [25, 28, "last"];
 const DIGEST_AT = 8 * 60;   // 08:00
 
 async function runReminders(env, manual = false, daily = false) {
@@ -531,6 +534,32 @@ async function runReminders(env, manual = false, daily = false) {
         result.digest = await toAdmins(card(`🌅 今日待審核：${title}`, "簽核中心", lines.slice(0, 10).join("\n") + (lines.length > 10 ? `\n…共 ${lines.length} 筆` : ""), "前往審核", `${LIFF}?view=approvals`));
       }
       if (!manual) await fs.patchPath(`reminders/${today}`, { digestSent: true });
+    }
+  }
+
+  // 3b. 月底提醒排下個月班表（下個月班表還沒發布才發）
+  if (NOTIFY.rosterReminder && (manual || daily)) {
+    const [y, m, d] = today.split("-").map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const isDay = ROSTER_REMIND_DAYS.some(x => x === "last" ? d === last : d === x);
+    const nm = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+    if (isDay || manual) {
+      const r = await fs.getPath(`rosters/${nm}`);
+      if (!r?.publishedAt) {
+        const mark = (await fs.getPath(`reminders/${today}`)) || {};
+        if (!mark.rosterSent || manual) {
+          const n = +nm.slice(5);
+          const state = !r ? "還沒建立" : "已經建立但還沒發布";
+          const left = last - d;
+          const msg = card(`📅 記得排 ${n} 月班表`, `${nm.slice(0, 4)}/${n}月班表${state}`,
+            `${ROSTER_REMIND_TO}，${left ? `再 ${left} 天就到 ${n} 月了` : `明天就是 ${n} 月了`}，記得排好班表並按「發布」，員工才看得到喔！`,
+            "前往排班", `${LIFF}?view=scheduling`, "#d70015");
+          const who = (await fs.where("employees", "name", ROSTER_REMIND_TO)).find(e => e.active !== false && String(e.lineUid || "").startsWith("line:"));
+          if (who) { await push(env, who.lineUid.slice(5), msg).catch(() => {}); result.roster = ROSTER_REMIND_TO; }
+          else result.roster = `管理者 ${await toAdmins(msg)} 位`;
+          if (!manual) await fs.patchPath(`reminders/${today}`, { rosterSent: true });
+        }
+      } else result.roster = `${nm} 已發布`;
     }
   }
 
