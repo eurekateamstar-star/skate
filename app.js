@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=93";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=94";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -2282,7 +2282,9 @@ function aiShift(v, time, shifts) {
   const t = /(\d{1,2}):?(\d{2})\s*[-~～]\s*(\d{1,2}):?(\d{2})/.exec(String(time || ""));
   if (t) {
     const st = `${pad(+t[1])}:${t[2]}`, en = `${pad(+t[3])}:${t[4]}`;
-    return shifts.find(s => s.start === st && s.end === en) || null;
+    const hits = shifts.filter(s => s.start === st && s.end === en);
+    if (hits[0]) hits[0]._multi = hits.length > 1;
+    return hits[0] || null;
   }
   return null;
 }
@@ -2307,7 +2309,7 @@ $("#aiGo").onclick = async () => {
   const text = $("#aiText").value.trim();
   if (!text) return toast("請先貼上排班訊息");
   const btn = $("#aiGo"), old = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> AI 分析中…（約 5–20 秒）`;
+  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> AI 分析中…（約 20–60 秒）`;
   try {
     await Promise.all([loadEmployees(), loadShiftTypes()]);
     const month = $("#schMonth").value;
@@ -2317,15 +2319,19 @@ $("#aiGo").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token, text, ctx: { today: ymd(new Date()), month,
         employees: emps.map(e => ({ name: e.name })), shifts: shifts.map(s => ({ name: s.name, start: s.start || "", end: s.end || "", cat: s.cat || "shift" })) } })
-    }), 60000);
+    }), 120000, "AI 分析逾時，請把訊息分成幾段再試");
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.message || ({ unauthorized: "登入逾時，請重新整理", forbidden: "只有管理者可以使用", no_ai: "Worker 還沒開通 AI 功能" }[d.error]) || d.error || r.status);
+    let outside = 0;
     const acts = (d.actions || []).map(a => {
       const op = ["add", "remove", "clear"].includes(a.op) ? a.op : "add";
       const emp = aiEmp(a.emp, emps), sh = op === "clear" ? null : aiShift(a.shift, a.time, shifts);
-      const dates = aiDates(a, month);
+      const all = aiDates(a, month), dates = all.filter(x => x.startsWith(month));
+      if (all.length > dates.length) outside++;
       const err = !emp ? `找不到員工「${a.emp || "?"}」` : op !== "clear" && !sh ? `找不到班別${a.time ? `（${a.time}）` : a.shift ? `「${a.shift}」` : ""}，請先到班別設定新增` : !dates.length ? "沒有日期" : "";
-      return { op, empId: emp?.id, sid: sh?.id, dates, why: String(a.reason || "").slice(0, 60), err, on: !err, off: new Set() };
+      const warn = sh?._multi ? `同時段（${sh.start}-${sh.end}）有好幾個班別，先選了「${sh.name}」，請確認後再勾選` : "";
+      if (sh) delete sh._multi;
+      return { op, empId: emp?.id, sid: sh?.id, dates, why: String(a.reason || "").slice(0, 60), err, warn, on: !err && !warn, off: new Set() };
     });
     // 讀取這些日期目前的排班
     const months = [...new Set(acts.flatMap(a => a.dates.map(x => x.slice(0, 7))))];
@@ -2333,7 +2339,9 @@ $("#aiGo").onclick = async () => {
     (await Promise.all(months.map(m => monthDocs("schedules", m)))).forEach(snap => snap.forEach(x => {
       base[x.id] = { ids: x.data().shiftIds || [], leave: x.data().leave || {} };
     }));
-    ai = { acts, notes: (d.notes || []).map(String), base };
+    const notes = (d.notes || []).map(String);
+    if (outside) notes.push(`有些日期不在 ${month}，已略過；要排其他月份請先打開那個月的班表再用 AI 排班`);
+    ai = { acts, notes, base };
     aiRender();
     aiStep(2);
     if (!acts.length) toast("AI 沒有找到排班動作，可以把訊息寫清楚一點再試");
@@ -2394,6 +2402,7 @@ function aiRender() {
         <span class="ai-op ${a.op}">${OP[a.op]}</span><span class="ai-who">${esc(empName(a.empId) || "？")}</span>${a.sid ? chipHtml(a.sid) : a.op === "clear" ? `<span class="hint" style="margin:0">當天所有班</span>` : ""}</label>
       ${a.why ? `<div class="ai-why">${esc(a.why)}</div>` : ""}
       ${a.err ? `<div class="ai-err">⚠️ ${esc(a.err)}</div>` : ""}
+      ${a.warn ? `<div class="ai-err">⚠️ ${esc(a.warn)}</div>` : ""}
       ${[...new Set(clashes)].slice(0, 3).map(t => `<div class="ai-err">${esc(t)}</div>`).join("")}
       ${cleared.slice(0, 6).map(t => `<div class="ai-why">${esc(t)}</div>`).join("")}
       <div class="ai-dates">${pills}</div></div>`;
