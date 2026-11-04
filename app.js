@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=76";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=77";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -855,7 +855,7 @@ const PUNCH_URL = `https://liff.line.me/${LIFF_ID}?view=clock`;
 $("#sharePunchBtn").onclick = async () => {
   const flex = { type: "flex", altText: "今天也要準時打卡｜野馬溜冰打卡系統", contents: {
     type: "bubble",
-    hero: { type: "image", url: "https://wild-horses-skating.pages.dev/share-card.png?v=8", size: "full", aspectRatio: "1200:1048", aspectMode: "cover", action: { type: "uri", uri: PUNCH_URL } },
+    hero: { type: "image", url: "https://wild-horses-skating.pages.dev/share-card.png?v=9", size: "full", aspectRatio: "1200:1048", aspectMode: "cover", action: { type: "uri", uri: PUNCH_URL } },
     footer: { type: "box", layout: "vertical", paddingAll: "16px", backgroundColor: "#e8182c", contents: [
       { type: "box", layout: "vertical", backgroundColor: "#ffffff", cornerRadius: "10px", paddingAll: "14px", action: { type: "uri", label: "我要打卡", uri: PUNCH_URL },
         contents: [{ type: "text", text: "我要打卡", weight: "bold", size: "lg", color: "#e8182c", align: "center" }] },
