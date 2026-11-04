@@ -856,7 +856,7 @@ $("#sharePunchBtn").onclick = async () => {
   const flex = { type: "flex", altText: "今天也要準時打卡｜野馬溜冰打卡系統", contents: {
     type: "bubble",
     styles: { hero: { backgroundColor: "#00000000" } },
-    hero: { type: "image", url: "https://wild-horses-skating.pages.dev/share-card.png?v=11", size: "full", aspectRatio: "1200:1105", aspectMode: "fit", action: { type: "uri", label: "我要打卡", uri: PUNCH_URL } } } };
+    hero: { type: "image", url: "https://wild-horses-skating.pages.dev/share-card.png?v=11", size: "full", aspectRatio: "1200:1115", aspectMode: "fit", action: { type: "uri", label: "我要打卡", uri: PUNCH_URL } } } };
   if (me?.role !== "admin") return;
   const ok = await getLiff();
   if (!ok || !liff.isInClient?.()) return appAlert("請在 LINE 裡打開", "圖文卡片只能在 LINE 裡分享，請從 LINE 官方帳號的選單打開打卡系統再按一次。");
