@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=96";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=97";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -811,6 +811,8 @@ function renderPunchCards() {
         <span>✓ 已${label}</span><small>${hm(r.t)} 打卡${r.outOfRange ? "・範圍外" : ""}${r.makeup ? "・補打卡" : ""}</small></button>`;
       if (req) return `<button class="btn big done" disabled><span>${label}</span><small>補打卡 ${req.time}・審核中</small></button>`;
       if (late[type]) return `<button class="btn big apply" data-makeup="${type}" data-sid="${id}"><span>補打卡</span><small>已超過${label}時間</small></button>`;
+      const openAt = notOpenYet(s);
+      if (openAt) return `<button class="btn big ${type}" disabled><span>${label}</span><small>${openAt} 開放打卡</small></button>`;
       if (chk.cls === "wait") return `<button class="btn big ${type}" disabled><span>${label}</span><small>定位中…</small></button>`;
       if (!chk.ok) return `<button class="btn big apply" data-punch="${type}" data-sid="${id}">
         <span>${label}</span><small>不在範圍・申請打卡</small></button>`;
@@ -965,6 +967,14 @@ $("#otherModal").onclick = async e => {
 const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
 const toMin = t => t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
 const MAKEUP_OUT_GRACE = 60;   // 下班後 60 分鐘內仍可直接打下班卡
+const EARLY_IN = 30;           // 上班前 30 分鐘才開放打卡
+// 還沒到開放時間 → 回傳開放時間 "HH:MM"，已開放回傳 null
+function notOpenYet(s) {
+  const st = toMin(s?.start);
+  if (st == null || nowMin() >= st - EARLY_IN) return null;
+  const o = st - EARLY_IN;
+  return `${pad(Math.floor(o / 60))}:${pad(o % 60)}`;
+}
 // 上班：班別結束後還沒打 → 補打卡；下班：下班時間 + 60 分鐘後還沒打 → 補打卡
 function isMakeup(s, type) {
   const end = toMin(s?.end);
@@ -1046,6 +1056,9 @@ $("#shiftPunch").onclick = e => {
 
 async function punch(type, sid) {
   const s = shiftMap[sid];
+  const openAt = notOpenYet(s);
+  if (openAt && !todayRecs.some(r => r.shiftId === sid && r.type === type))
+    return appAlert("還沒開放打卡", `「${s.name}」上班前 ${EARLY_IN} 分鐘才能打卡，${openAt} 開放。`);
   const loc = locFor(s, type);
   const chk = rangeCheck(loc);
   let reason = "";
