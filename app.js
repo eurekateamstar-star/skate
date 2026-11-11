@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=99";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=100";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -3305,9 +3305,10 @@ async function fetchApproved() {
 function setApBadge() {
   const n = ap.leave.length + ap.punch.length + ap.shift.length;
   ["#apBadge", "#apBadge2", "#apBadge3"].forEach(sel => { const el = $(sel); if (el) { el.textContent = n; el.classList.toggle("hidden", !n); } });
-  $("#apN1").textContent = ap.leave.length || "";
-  $("#apN2").textContent = ap.punch.length || "";
-  $("#apN3").textContent = ap.shift.length || "";
+  // 分頁上的紅色數字
+  [["#apN1", ap.leave.length], ["#apN2", ap.punch.length], ["#apN3", ap.shift.length]].forEach(([sel, n]) => {
+    const el = $(sel); el.textContent = n || ""; el.className = n ? "seg-badge" : "";
+  });
 }
 async function loadApprovals() {
   await Promise.all([fetchPending(), ap.tab === "done" ? fetchApproved() : null, employees.length ? null : loadEmployees()]);

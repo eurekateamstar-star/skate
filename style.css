@@ -1062,3 +1062,6 @@ body.is-loading.is-slow .load-spin{pointer-events:auto;background:rgba(242,242,2
 .viewas-bar.hidden{display:none}
 .viewas-bar .va-btns{display:flex;gap:8px}
 body.viewing-as .topbar{box-shadow:inset 0 -3px 0 #ffb020}
+
+/* 簽核中心分頁的紅色數字 */
+.seg-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:700;margin-left:4px;vertical-align:1px;line-height:1}
