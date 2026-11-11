@@ -1,12 +1,12 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, signInWithCustomToken, signOut
+  getAuth, initializeAuth, browserLocalPersistence, inMemoryPersistence, onAuthStateChanged, signInWithCustomToken, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=100";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=101";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -42,9 +42,11 @@ function monthDocs(coll, month) {
 }
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
 // LINE App 內建瀏覽器用 long polling 連線，避免 Firestore 卡住
 const IN_LINE = /\bLine\//i.test(navigator.userAgent);
+// LINE（iOS WebView）裡 IndexedDB 常常被上一個沒關掉的畫面鎖住，登入狀態讀不出來就整個卡住、
+// 連重新整理都沒用 → 在 LINE 裡改用 localStorage 存登入狀態，完全不碰 IndexedDB
+const auth = IN_LINE ? initializeAuth(app, { persistence: [browserLocalPersistence, inMemoryPersistence] }) : getAuth(app);
 const db = initializeFirestore(app, IN_LINE ? { experimentalForceLongPolling: true } : { experimentalAutoDetectLongPolling: true });
 let liff = null;   // LINE SDK：只有需要登入時才載入，已登入者不必等
 
@@ -279,7 +281,11 @@ const authReady = new Promise(r => authOk = r);
 
 async function boot() {
   const cache = readCache();
-  const authUser = new Promise(res => { const un = onAuthStateChanged(auth, u => { un(); res(u); }); });
+  // 登入狀態最多等 8 秒，讀不到就當作沒登入、改走 LINE 重新登入（不會一直卡著）
+  const authUser = new Promise(res => {
+    const t = setTimeout(() => res(auth.currentUser || null), 8000);
+    const un = onAuthStateChanged(auth, u => { clearTimeout(t); un(); res(u); });
+  });
 
   // 秒開：有快取就先顯示畫面，背景再確認登入
   if (cache?.me && cache.uid) {
