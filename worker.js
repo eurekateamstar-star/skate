@@ -63,6 +63,16 @@ export default {
         return json(await notifyNew(env, body.coll, body.id));
       } catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
+    // 管理者（從網站登入）重新套用 LINE 圖文選單，不用 SETUP_KEY
+    if (path === "/admin-richmenu") {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const uid = await verifyFirebaseToken(body.token, env);
+        const emp = uid && await new Firestore(env).findByLineUid(uid);
+        if (!emp || emp.role !== "admin") return json({ error: "forbidden" }, 403);
+        return json(await setupRichMenu(env));
+      } catch (e) { return json({ error: String(e?.message || e) }, 500); }
+    }
     // 管理者測試：把「月底排班提醒」傳一則給自己看樣式
     if (path === "/test-roster-remind") {
       try {
