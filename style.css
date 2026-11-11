@@ -1055,3 +1055,10 @@ body.is-loading.is-slow .load-spin{pointer-events:auto;background:rgba(242,242,2
 .ai-sel-sh{font-weight:600;font-size:14px;color:#fff;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3C/svg%3E");min-width:0;flex:0 1 auto;text-overflow:ellipsis}
 .ai-sel option{color:#1d1d1f;background:#fff}
 .ai-tip{font-size:11px;color:#aeaeb2;margin:2px 0 0 28px}
+
+/* 開發者：檢視其他人 */
+#viewAsBtn{font-size:18px;line-height:1}
+.viewas-bar{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff4d6;border:1px solid #ffd27a;color:#7a4b00;border-radius:14px;padding:10px 14px;margin-bottom:14px;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+.viewas-bar.hidden{display:none}
+.viewas-bar .va-btns{display:flex;gap:8px}
+body.viewing-as .topbar{box-shadow:inset 0 -3px 0 #ffb020}

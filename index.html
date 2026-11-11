@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=98">
+  <link rel="stylesheet" href="style.css?v=99">
 </head>
 <body>
 
@@ -94,6 +94,7 @@
     <div class="user">
       <img id="userPic" class="avatar hidden" alt="">
       <span id="userName"></span>
+      <button id="viewAsBtn" class="icon-btn hidden" title="切換檢視身分（開發者）">👀</button>
       <button id="logoutBtn" class="icon-btn" title="登出"><svg class="ic"><use href="#i-out"/></svg></button>
     </div>
   </header>
@@ -120,6 +121,10 @@
     </nav>
 
     <main>
+      <div id="viewAsBar" class="viewas-bar hidden">
+        <span>👀 正在檢視 <b id="viewAsName"></b> 的畫面・唯讀</span>
+        <span class="va-btns"><button class="btn small" id="viewAsSwitch">換人</button><button class="btn small primary" id="viewAsExit">回到自己</button></span>
+      </div>
       <!-- 打卡 -->
       <section id="view-clock" class="view">
         <div class="card clock-card">
@@ -860,6 +865,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=98"></script>
+<script type="module" src="app.js?v=99"></script>
 </body>
 </html>

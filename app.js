@@ -6,16 +6,19 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=98";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=99";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
 const MEMO_TTL = 3 * 60e3;
-const setDoc = (...a) => { MEMO.clear(); return _setDoc(...a); };
-const updateDoc = (...a) => { MEMO.clear(); return _updateDoc(...a); };
-const deleteDoc = (...a) => { MEMO.clear(); return _deleteDoc(...a); };
-const addDoc = (...a) => { MEMO.clear(); return _addDoc(...a); };
-const writeBatch = d => { const b = _writeBatch(d); const c = b.commit.bind(b); b.commit = () => { MEMO.clear(); return c(); }; return b; };
+// 開發者「檢視其他人」模式：只看不寫，任何寫入都擋下來
+const roBlock = () => { const e = new Error("檢視模式（唯讀）：不會寫入任何資料"); try { toast(e.message); } catch {} return Promise.reject(e); };
+const isViewAs = () => !!me?._as;
+const setDoc = (...a) => { if (isViewAs()) return roBlock(); MEMO.clear(); return _setDoc(...a); };
+const updateDoc = (...a) => { if (isViewAs()) return roBlock(); MEMO.clear(); return _updateDoc(...a); };
+const deleteDoc = (...a) => { if (isViewAs()) return roBlock(); MEMO.clear(); return _deleteDoc(...a); };
+const addDoc = (...a) => { if (isViewAs()) return roBlock(); MEMO.clear(); return _addDoc(...a); };
+const writeBatch = d => { const b = _writeBatch(d); const c = b.commit.bind(b); b.commit = () => { if (isViewAs()) return roBlock(); MEMO.clear(); return c(); }; return b; };
 function collDocs(coll) {
   const k = coll + "|*", hit = MEMO.get(k);
   if (hit && Date.now() - hit.at < MEMO_TTL) return hit.p;
@@ -280,7 +283,7 @@ async function boot() {
 
   // 秒開：有快取就先顯示畫面，背景再確認登入
   if (cache?.me && cache.uid) {
-    me = cache.me;
+    me = asView(cache.me);
     shiftTypes = cache.shiftTypes || [];
     shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
     locations = cache.locations || [];
@@ -460,7 +463,13 @@ $("#bindForm").onsubmit = async e => {
   }
 };
 
+$("#viewAsBtn").onclick = () => pickViewAs();
+$("#viewAsBar").onclick = e => {
+  if (e.target.closest("#viewAsSwitch")) return pickViewAs();
+  if (e.target.closest("#viewAsExit")) { sessionStorage.removeItem(VIEWAS_KEY); location.href = location.pathname + "?view=" + (ADMIN_VIEWS.includes(curView) ? "clock" : curView); }
+};
 $("#logoutBtn").onclick = async () => {
+  try { sessionStorage.removeItem(VIEWAS_KEY); } catch {}
   await signOut(auth);
   clearCache();
   try { if (liffReady && await liffReady && liff.isLoggedIn() && !liff.isInClient()) liff.logout(); } catch {}
@@ -483,20 +492,53 @@ async function enterApp(user) {
 // 本機快取：第二次開啟立即顯示，背景再確認
 const CACHE_KEY = "punch_cache_v1";
 const readCache = () => { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; } };
-const writeCache = () => { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: auth.currentUser?.uid, me, shiftTypes, locations })); } catch {} };
+const writeCache = () => { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: auth.currentUser?.uid, me: realMe || me, shiftTypes, locations })); } catch {} };
+/* ---- 開發者：切換成某位員工的畫面（唯讀測試）---- */
+const VIEWAS_KEY = "punch_viewas_v1";
+let realMe = null;
+function asView(m) {
+  realMe = null;
+  if (!m?.dev) return m;
+  let t = null; try { t = JSON.parse(sessionStorage.getItem(VIEWAS_KEY) || "null"); } catch {}
+  if (!t?.id || t.id === m.id) return m;
+  realMe = m;
+  return { ...t, _as: true };
+}
+async function pickViewAs() {
+  const real = realMe || me;
+  if (!real?.dev) return;
+  await loadEmployees();
+  const list = allEmps.filter(e => e.active !== false);
+  const v = await appDialog({
+    title: "👀 切換檢視身分", message: "選一位員工，個人專區會顯示他看到的畫面（唯讀，不會寫入資料）。",
+    select: [{ value: real.id, label: `我自己（${real.name}）` }, ...list.filter(e => e.id !== real.id).map(e => ({ value: e.id, label: `${e.name}${e.role === "admin" ? "（管理者）" : ""}` }))],
+    buttons: [{ text: "取消", value: false }, { text: "切換", value: true, style: "primary" }]
+  });
+  if (!v) return;
+  if (v === real.id) sessionStorage.removeItem(VIEWAS_KEY);
+  else {
+    const { lineUid, bindFails, createdAt, updatedAt, ...t } = list.find(e => e.id === v) || {};
+    sessionStorage.setItem(VIEWAS_KEY, JSON.stringify({ ...t, id: v, lineUid: "" }));
+  }
+  location.href = location.pathname + "?view=" + (curView && !ADMIN_VIEWS.includes(curView) ? curView : "clock");
+}
 const clearCache = () => { try { localStorage.removeItem(CACHE_KEY); } catch {} };
 
 function showShell() {
   $("#userName").textContent = `${me.name}${me.role === "admin" ? "（管理者）" : ""}`;
   if (me.linePicture) { $("#userPic").src = me.linePicture; $("#userPic").classList.remove("hidden"); }
   $$(".admin-only").forEach(el => el.classList.toggle("hidden", me.role !== "admin"));
+  $("#viewAsBtn").classList.toggle("hidden", !(realMe || me)?.dev);
+  $("#viewAsBar").classList.toggle("hidden", !realMe);
+  document.body.classList.toggle("viewing-as", !!realMe);
+  if (realMe) $("#viewAsName").textContent = me.name + (me.role === "admin" ? "（管理者）" : "");
 }
 
 async function verifyMe(user, empId) {
   const [snap] = await Promise.all([getDoc(doc(db, "employees", empId)), loadShiftTypes()]);
   const d = snap.exists() ? snap.data() : null;
   if (!d || d.lineUid !== user.uid || d.active === false) throw Object.assign(new Error("帳號已停用或已解除綁定"), { code: "unbound" });
-  me = { id: snap.id, ...d };
+  me = asView({ id: snap.id, ...d });
   writeCache();
   return me;
 }
@@ -508,7 +550,7 @@ async function enterAppInner(user) {
     const cache = readCache();
     if (cache && cache.uid === user.uid && cache.me?.id === claims.empId) {
       // 快速路徑：先用快取畫面，背景確認
-      me = cache.me;
+      me = asView(cache.me);
       shiftTypes = cache.shiftTypes || [];
       shiftMap = Object.fromEntries(shiftTypes.map(s => [s.id, s]));
       showShell();
@@ -563,7 +605,9 @@ const TITLES = {
   leave: "請假", approvals: "簽核中心", mypay: "我的薪資", today: "今日上班"
 };
 const ADMIN_VIEWS = ["today", "approvals", "scheduling", "report", "payroll", "employees", "shifts"];
+let curView = "clock";
 function showView(name) {
+  curView = name;
   $$(".view").forEach(v => v.classList.add("hidden"));
   $(`#view-${name}`).classList.remove("hidden");
   $$("[data-view]").forEach(a => a.classList.toggle("active", a.dataset.view === name));
