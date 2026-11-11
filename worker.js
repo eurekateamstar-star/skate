@@ -368,7 +368,7 @@ async function setupRichMenu(env) {
     box(0, 0, 1250, 250, { type: "richmenuswitch", richMenuAliasId: "punch-admin-staff", data: "tab=staff" }),
     box(1250, 0, 1250, 250, { type: "richmenuswitch", richMenuAliasId: "punch-admin", data: "tab=admin" })
   ];
-  const adminTiles = [["approvals"], ["scheduling"], ["report"], ["payroll"], ["employees"], ["shifts"]]
+  const adminTiles = [["approvals"], ["scheduling"], ["today"], ["payroll"], ["employees"], ["shifts"]]
     .map(([v, ex], i) => box(Math.round((i % 3) * 2500 / 3), 250 + Math.floor(i / 3) * 718, Math.round(2500 / 3), 718, go(v, ex)));
   const menus = [
     { key: "staff", name: "打卡系統-員工", img: "menu-staff.png", areas: staffTiles },

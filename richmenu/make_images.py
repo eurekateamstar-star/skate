@@ -65,6 +65,13 @@ def icon(d,kind,cx,cy,s,col,w):
     elif kind=="check":
         L([(cx-r*.45,cy-r*.05),(cx-r*.05,cy+r*.35),(cx+r*.95,cy-r*.75)])
         d.arc([cx-r,cy-r,cx+r,cy+r],40,330,fill=col,width=w)
+    elif kind=="today":   # 人像＋右下小時鐘：今日上班
+        d.ellipse([cx-r*.85,cy-r*1.0,cx-r*.05,cy-r*.2],outline=col,width=w)
+        d.arc([cx-r*1.25,cy+r*.05,cx+r*.35,cy+r*1.75],195,345,fill=col,width=w)
+        ox,oy,orr,w2=cx+r*.52,cy+r*.42,r*.62,max(6,int(w*.7))
+        d.ellipse([ox-orr-w*1.1,oy-orr-w*1.1,ox+orr+w*1.1,oy+orr+w*1.1],fill=(TINT or ACC))
+        d.ellipse([ox-orr,oy-orr,ox+orr,oy+orr],outline=col,width=w2)
+        d.line([(ox,oy-orr*.55),(ox,oy),(ox+orr*.42,oy+orr*.22)],fill=col,width=w2,joint="curve")
     elif kind=="team":
         rr(cx-r,cy-r*.8,cx+r,cy+r,s*.12); L([(cx-r,cy-r*.25),(cx+r,cy-r*.25)])
         for i,x in enumerate([-.45,.15]):
@@ -147,7 +154,7 @@ def emp(mode,name):
 
 def admin(name):
     img=Image.new("RGB",(W,H),BG); d=ImageDraw.Draw(img); header(d,"admin")
-    items=[("check","簽核中心","請假・補打卡"),("grid","排班作業","每月班表"),("chart","出勤報表","打卡細項"),
+    items=[("check","簽核中心","請假・補打卡"),("grid","排班作業","每月班表"),("today","今日上班","誰在上班"),
            ("money","薪資計算","當月薪資"),("users","員工管理","人員・綁定"),("tag","班別設定","班別・地點")]
     cw=W/3; ch=(H-HD)/2
     for i,(k,t,s) in enumerate(items):
