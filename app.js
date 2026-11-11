@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=97";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=98";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -27,7 +27,12 @@ function collDocs(coll) {
 function monthDocs(coll, month) {
   const k = coll + "|" + month, hit = MEMO.get(k);
   if (hit && Date.now() - hit.at < MEMO_TTL) return hit.p;
-  const p = getDocs(query(collection(db, coll), where("month", "==", month)));
+  const p = getDocs(query(collection(db, coll), where("month", "==", month))).then(async snap => {
+    if (!devLoaded) await loadEmployees().catch(() => {});
+    if (!DEV_IDS.size) return snap;
+    const docs = snap.docs.filter(d => !DEV_IDS.has(d.data().empId));   // 開發者的打卡／班表不列入
+    return { docs, size: docs.length, empty: !docs.length, forEach: fn => docs.forEach(fn) };
+  });
   MEMO.set(k, { at: Date.now(), p });
   p.catch(() => MEMO.delete(k));
   return p;
@@ -192,6 +197,9 @@ let shiftTypes = [];
 let shiftMap = {};
 let employees = [];     // 員工清單（管理者用）
 let staff = [];         // 員工名單（只有 id／姓名，所有人可讀，選代班用）
+let allEmps = [];       // 含開發者帳號的完整名單（只給開發者自己看、匯入比對用）
+let DEV_IDS = new Set(); // 開發者帳號（employees.dev = true）：不出現在排班、報表、薪資、員工名單
+let devLoaded = false;
 
 function shiftHours(s) {
   if (!s.start || !s.end) return "";
@@ -1326,7 +1334,7 @@ async function loadMySchedule() {
   renderWeek();
   $("#myCalWrap").classList.toggle("hidden", mySchMode !== "mine");
   $("#teamWrap").classList.toggle("hidden", mySchMode !== "all");
-  if (mySchMode === "all" && pub) renderTeam(month, pub);
+  if (mySchMode === "all" && pub) { await loadStaff().catch(() => {}); renderTeam(month, pub); }
 }
 
 let mySch = {}, mySel = null;
@@ -1398,7 +1406,8 @@ function renderTeam(month, pub) {
   // 電腦：表格
   let html = `<thead><tr><th class="name">姓名</th>${days.map(d =>
     `<th class="${wk(d)}"${ymd(d) === today ? ' style="color:var(--primary)"' : ""}>${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）</th>`).join("")}</tr></thead><tbody>`;
-  for (const u of pub.emps || []) {
+  const emps = (pub.emps || []).filter(u => !staffHide.has(u.id) || u.id === me.id);
+  for (const u of emps) {
     html += `<tr class="${u.id === me.id ? "me" : ""}"><td class="name">${esc(u.name)}</td>`;
     for (const d of days) html += `<td class="${wk(d)}">${cellIds(u.id, ymd(d)).map(id => chipHtml(id)).join("")}</td>`;
     html += "</tr>";
@@ -1407,7 +1416,7 @@ function renderTeam(month, pub) {
   // 手機：每天誰上班
   $("#teamDays").innerHTML = days.map(d => {
     const ds = ymd(d);
-    const rows = (pub.emps || []).map(u => ({ u, ids: cellIds(u.id, ds) })).filter(x => x.ids.length);
+    const rows = emps.map(u => ({ u, ids: cellIds(u.id, ds) })).filter(x => x.ids.length);
     return `<div class="team-day ${wk(d)} ${ds === today ? "today" : ""}">
       <div class="td-head"><b>${d.getMonth() + 1}/${d.getDate()}</b><span>週${WEEK[d.getDay()]}</span><span class="td-n">${rows.length ? rows.length + " 人" : "無排班"}</span></div>
       ${rows.map(x => `<div class="td-row ${x.u.id === me.id ? "me" : ""}"><span class="td-name">${esc(x.u.name)}</span><span class="td-chips">${x.ids.map(id => chipHtml(id)).join("")}</span></div>`).join("")}
@@ -1425,24 +1434,31 @@ $("#mySchMode").onclick = e => {
 /* ================= 員工管理（管理者） ================= */
 async function loadEmployees() {
   const snap = await collDocs("employees");
-  employees = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  allEmps = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (a.empNo || "zzz").localeCompare(b.empNo || "zzz") || (a.name || "").localeCompare(b.name || ""));
+  DEV_IDS = new Set(allEmps.filter(e => e.dev).map(e => e.id));
+  employees = allEmps.filter(e => !e.dev);
+  devLoaded = true;
 }
+// 員工管理：開發者自己看得到完整名單，其他管理者看不到開發者
+const mgmtEmps = () => me?.dev ? allEmps : employees;
 const activeEmployees = () => employees.filter(e => e.active !== false);
 
+let staffHide = new Set();
 async function loadStaff() {
   if (staff.length) return staff;
   const d = await getDoc(doc(db, "meta", "staff"));
   staff = d.exists() ? (d.data().list || []) : [];
+  staffHide = new Set(d.exists() ? (d.data().hide || []) : []);
   return staff;
 }
 // 管理者：把在職員工姓名同步到 meta/staff，讓員工選代班人
 async function syncStaff() {
   if (me?.role !== "admin") return;
   if (!employees.length) await loadEmployees();
-  const list = activeEmployees().map(e => ({ id: e.id, name: e.name || "" }));
+  const list = activeEmployees().map(e => ({ id: e.id, name: e.name || "" })), hide = [...DEV_IDS];
   const d = await getDoc(doc(db, "meta", "staff"));
-  if (JSON.stringify(d.exists() ? d.data().list : null) !== JSON.stringify(list)) await setDoc(doc(db, "meta", "staff"), { list, updatedAt: serverTimestamp() });
+  if (JSON.stringify(d.exists() ? [d.data().list, d.data().hide || []] : null) !== JSON.stringify([list, hide])) await setDoc(doc(db, "meta", "staff"), { list, hide, updatedAt: serverTimestamp() });
   staff = list;
 }
 let empF = "";
@@ -1454,7 +1470,7 @@ async function loadEmployeesView() {
 }
 // 電腦版：原本的表格（直接在表格裡修改）
 function renderEmpTable() {
-  $("#empListT").innerHTML = employees.map(u => {
+  $("#empListT").innerHTML = mgmtEmps().map(u => {
     const locked = empLocked(u);
     const lineCell = u.lineUid
       ? `<span class="line-cell">${u.linePicture ? `<img class="avatar" src="${esc(u.linePicture)}" alt="">` : ""}${esc(u.lineName || "已綁定")}</span>`
@@ -1483,7 +1499,7 @@ $("#empForm").onsubmit = async e => {
 };
 $("#empListT").onclick = async e => {
   const tr = e.target.closest("tr[data-id]"); if (!tr) return;
-  const id = tr.dataset.id, emp = employees.find(x => x.id === id);
+  const id = tr.dataset.id, emp = allEmps.find(x => x.id === id);
   try {
     if (e.target.classList.contains("e-save")) {
       const data = { empNo: $(".e-no", tr).value.trim(), name: $(".e-name", tr).value.trim(), email: $(".e-email", tr).value.trim().toLowerCase(),
@@ -1504,7 +1520,7 @@ $("#empListT").onclick = async e => {
 const empBound = u => !!u.lineUid, empLocked = u => !u.lineUid && (u.bindFails || 0) >= 5;
 function renderEmpList() {
   const q = $("#empSearch").value.trim().toLowerCase();
-  const list = employees.filter(u => (!q || `${u.name} ${u.empNo} ${u.email}`.toLowerCase().includes(q))
+  const list = mgmtEmps().filter(u => (!q || `${u.name} ${u.empNo} ${u.email}`.toLowerCase().includes(q))
     && (empF === "" || (empF === "unbound" && !empBound(u) && u.active !== false) || (empF === "admin" && u.role === "admin") || (empF === "off" && u.active === false)));
   const act = employees.filter(u => u.active !== false);
   $("#empSub").textContent = `在職 ${act.length} 人・已綁定 LINE ${act.filter(empBound).length} 人・未綁定 ${act.filter(u => !empBound(u)).length} 人`;
@@ -1546,7 +1562,7 @@ function openEmp(u) {
 }
 function closeEmp() { $("#empModal").classList.remove("open"); setTimeout(() => $("#empModal").classList.add("hidden"), 200); }
 $("#empAddBtn").onclick = () => openEmp(null);
-$("#empList").onclick = e => { const r = e.target.closest(".emr-row"); if (r) openEmp(employees.find(x => x.id === r.dataset.id)); };
+$("#empList").onclick = e => { const r = e.target.closest(".emr-row"); if (r) openEmp(allEmps.find(x => x.id === r.dataset.id)); };
 $("#emRole").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) setSeg("#emRole", b.dataset.v); };
 $("#emActive").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) setSeg("#emActive", b.dataset.v); };
 $("#empModal").onclick = async e => {
@@ -1593,7 +1609,7 @@ $("#importBtn").onclick = async () => {
   $("#importBtn").disabled = true;
   try {
     await loadEmployees();
-    const byEmail = Object.fromEntries(employees.map(e => [(e.email || "").toLowerCase(), e]));
+    const byEmail = Object.fromEntries(allEmps.map(e => [(e.email || "").toLowerCase(), e]));
     const seen = new Set();
     const bad = [];
     let batch = writeBatch(db), n = 0, add = 0, upd = 0;
