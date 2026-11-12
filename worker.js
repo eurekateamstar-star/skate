@@ -73,6 +73,23 @@ export default {
         return json(await setupRichMenu(env));
       } catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
+    // 管理者測試：把「早安報告」傳一則給自己（preview=1 只回傳內容不發送）
+    if (path === "/test-daily-report") {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const uid = await verifyFirebaseToken(body.token, env);
+        const fs = new Firestore(env);
+        const emp = uid && await fs.findByLineUid(uid);
+        if (!emp || emp.role !== "admin") return json({ error: "forbidden" }, 403);
+        const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+        const msg = await buildDailyReport(fs, body.date || today, "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9"));
+        if (!msg) return json({ ok: true, empty: true });
+        if (body.preview) return json({ ok: true, msg });
+        msg.altText = "（測試）" + msg.altText;
+        await push(env, uid.slice(5), msg);
+        return json({ ok: true, to: emp.name });
+      } catch (e) { return json({ error: String(e?.message || e) }, 500); }
+    }
     // 管理者測試：把「月底排班提醒」傳一則給自己看樣式
     if (path === "/test-roster-remind") {
       try {
@@ -296,6 +313,15 @@ class Firestore {
     });
     return (res || []).filter(x => x.document).map(x => decode(x.document));
   }
+  async whereRange(coll, field, from, to) {
+    const f = (op, v) => ({ fieldFilter: { field: { fieldPath: field }, op, value: { stringValue: v } } });
+    const res = await this.req(`${this.base}:runQuery`, {
+      method: "POST",
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: coll }],
+        where: { compositeFilter: { op: "AND", filters: [f("GREATER_THAN_OR_EQUAL", from), f("LESS_THAN_OR_EQUAL", to)] } } } })
+    });
+    return (res || []).filter(x => x.document).map(x => decode(x.document));
+  }
   async list(coll) {
     const out = [];
     let pageToken = "";
@@ -456,6 +482,98 @@ async function loadPlan(fs, today, force) {
   return { doc, plan };
 }
 
+/* ---------- 早安報告（方案 1：清單式）---------- */
+async function buildDailyReport(fs, today, LIFF) {
+  const W = "日一二三四五六";
+  const D = ds => new Date(ds + "T00:00:00Z");
+  const add = (ds, n) => { const d = D(ds); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const md = ds => `${+ds.slice(5, 7)}/${+ds.slice(8)}`;
+  const mdw = ds => `${md(ds)}(${W[D(ds).getUTCDay()]})`;
+  const yest = add(today, -1);
+  const dow = D(today).getUTCDay(), wkFrom = add(today, -((dow + 6) % 7)), wkTo = add(wkFrom, 6);   // 週一～週日
+
+  const [shifts, emps, schY, schT, schW, attY, p, sh, l] = await Promise.all([
+    fs.list("shiftTypes"), fs.list("employees"),
+    fs.where("schedules", "date", yest), fs.where("schedules", "date", today), fs.whereRange("schedules", "date", wkFrom, wkTo),
+    fs.where("attendance", "date", yest),
+    fs.where("punchRequests", "status", "pending"), fs.where("shiftRequests", "status", "pending"), fs.where("leaveRequests", "status", "pending")
+  ]);
+  const S = Object.fromEntries(shifts.map(x => [x.id, x]));
+  const E = Object.fromEntries(emps.filter(e => e.active !== false && !e.dev).map(e => [e.id, e]));
+  const short = n => { n = String(n || ""); const m = /^學校課堂\((.+)\)$/.exec(n); return m ? m[1] : n.replace("溜冰場", ""); };
+  const work = x => (x.shiftIds || []).map(id => S[id]).filter(s => s && s.cat !== "leave" && s.start && s.end && !x.leave?.[s.id]);
+
+  // 昨天沒打卡
+  const missed = [];
+  for (const x of schY) {
+    if (!E[x.empId]) continue;
+    for (const s of work(x)) {
+      const has = t => attY.some(a => a.empId === x.empId && a.shiftId === s.id && a.type === t);
+      const req = t => p.some(q => q.empId === x.empId && q.date === yest && q.shiftId === s.id && q.type === t);
+      const lack = ["in", "out"].filter(t => !has(t));
+      if (!lack.length) continue;
+      const what = lack.length === 2 ? "沒打卡" : lack[0] === "in" ? "缺上班卡" : "缺下班卡";
+      missed.push({ name: E[x.empId].name, st: s.start, txt: `${short(s.name)} ${s.start}–${s.end}・${what}${lack.every(req) ? "（已申請補卡）" : ""}` });
+    }
+  }
+  missed.sort((a, b) => a.st.localeCompare(b.st));
+
+  // 今天上班（同一人多個班合併）、今天請假
+  const working = [], offToday = [];
+  for (const x of schT) {
+    if (!E[x.empId]) continue;
+    const ws = work(x).sort((a, b) => a.start.localeCompare(b.start));
+    if (ws.length) working.push({ name: E[x.empId].name, st: ws[0].start, txt: ws.map(s => `${short(s.name)} ${s.start}`).join("、") });
+    const lv = Object.entries(x.leave || {}).filter(([sid]) => S[sid]);
+    if (lv.length) offToday.push({ name: E[x.empId].name, txt: `${[...new Set(lv.map(([, t]) => t))].join("、")}・${lv.map(([sid]) => short(S[sid].name)).join("、")}` });
+  }
+  working.sort((a, b) => a.st.localeCompare(b.st) || a.name.localeCompare(b.name));
+
+  // 本週請假（每人每天一列）
+  const offWeek = schW.filter(x => E[x.empId] && Object.keys(x.leave || {}).length)
+    .map(x => ({ name: E[x.empId].name, date: x.date, txt: `${mdw(x.date)} ${[...new Set(Object.values(x.leave))].join("、")}` }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+
+  const pend = [p.length ? `補打卡 ${p.length}` : "", sh.length ? `加班 ${sh.length}` : "", l.length ? `請假 ${l.length}` : ""].filter(Boolean).join("・");
+  if (!missed.length && !working.length && !offToday.length && !offWeek.length && !pend) return null;
+
+  const MAX = 12;
+  const row = (name, txt) => ({ type: "box", layout: "horizontal", spacing: "md", margin: "sm", contents: [
+    { type: "text", text: name, weight: "bold", size: "sm", color: "#1d1d1f", flex: 0 },
+    { type: "text", text: txt, size: "xs", color: "#6e6e73", align: "end", wrap: true, flex: 1, gravity: "center" }
+  ] });
+  const section = (title, color, list, empty) => [
+    { type: "separator", margin: "lg", color: "#ececf0" },
+    { type: "text", text: title, weight: "bold", size: "sm", color, margin: "lg" },
+    ...(list.length ? list.slice(0, MAX).map(x => row(x.name, x.txt)) : [{ type: "text", text: empty, size: "xs", color: "#aeaeb2", margin: "sm" }]),
+    ...(list.length > MAX ? [{ type: "text", text: `…另外 ${list.length - MAX} 筆`, size: "xs", color: "#aeaeb2", margin: "sm" }] : [])
+  ];
+  const body = [
+    { type: "text", text: `${mdw(today).replace("(", "（").replace(")", "）")}早安報告`, size: "xs", color: "#8e8e93" },
+    { type: "text", text: "☀️ 今日出勤摘要", weight: "bold", size: "xl", color: "#1d1d1f", margin: "xs" },
+    ...section(`⚠️ 昨天沒打卡（${missed.length}）`, "#d70015", missed, "全部都有打卡 👍"),
+    ...section(`👥 今天上班（${working.length}）`, "#0068e0", working, "今天沒有排班"),
+    ...section(`🌴 今天請假（${offToday.length}）`, "#e07800", offToday, "沒有人請假"),
+    ...section(`📅 本週請假 ${md(wkFrom)}–${md(wkTo)}`, "#7a5af8", offWeek, "本週沒有人請假")
+  ];
+  if (pend) body.push({ type: "separator", margin: "lg", color: "#ececf0" },
+    { type: "box", layout: "baseline", margin: "lg", contents: [
+      { type: "text", text: "📝 待審核：", size: "sm", color: "#1d1d1f", flex: 0 },
+      { type: "text", text: pend, size: "sm", weight: "bold", color: "#d70015", flex: 0, margin: "sm" }] });
+  return {
+    type: "flex",
+    altText: `☀️ ${md(today)} 早安報告：昨天沒打卡 ${missed.length}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
+    contents: {
+      type: "bubble", size: "mega",
+      body: { type: "box", layout: "vertical", paddingAll: "18px", contents: body },
+      footer: { type: "box", layout: "vertical", paddingTop: "0px", contents: [
+        { type: "button", style: "primary", color: "#0068e0", height: "sm",
+          action: { type: "uri", label: pend ? "前往簽核中心" : "查看今日上班", uri: `${LIFF}?view=${pend ? "approvals" : "today"}` } }
+      ] }
+    }
+  };
+}
+
 async function notifyNew(env, coll, id) {
   const fs = new Firestore(env);
   const q = await fs.getPath(`${coll}/${id}`);
@@ -473,7 +591,7 @@ async function notifyNew(env, coll, id) {
 // LINE 免費方案每月訊息有限，預設只通知管理者
 const NOTIFY = {
   leaveToAdmin: false,      // 改由員工送出時直接呼叫 /notify 即時通知（不用排程搜尋）
-  dailyDigest: true,        // 每天早上 8:00：還沒審核的補打卡（及仍未處理的請假／加班）→ 一則彙整給管理者（都處理完就不發）
+  dailyDigest: true,        // 每天早上 8:00 早安報告：昨天沒打卡、今天上班／請假、本週請假、待審核 → 一則給管理者
   shiftReminders: false,    // 上下班前後提醒員工（很耗訊息量，預設關閉）
   employeeResults: false,   // 審核結果、薪資發布、代班 → 通知員工（員工打開系統會跳出，預設不發 LINE）
   rosterReminder: true      // 月底下個月班表還沒發布 → 提醒排班的人（25 號、28 號、月底最後一天各一次，發布了就不發）
@@ -550,20 +668,12 @@ async function runReminders(env, manual = false, daily = false) {
     for (const q of pendS) await fs.patchPath(`shiftRequests/${q.id}`, { notified: true }).catch(() => {});
   }
 
-  // 3. 每天早上 8:00 彙整還沒審核的申請（已經處理完就不發）
+  // 3. 每天早上 8:00 早安報告：昨天沒打卡、今天上班、今天請假、本週請假、待審核（全部都沒有就不發）
   if (NOTIFY.dailyDigest && (manual || daily || inWin(DIGEST_AT, 0))) {
     const mark = (await fs.getPath(`reminders/${today}`)) || {};
     if (!mark.digestSent || manual) {
-      const [p, sh, l] = await Promise.all([fs.where("punchRequests", "status", "pending"), fs.where("shiftRequests", "status", "pending"), fs.where("leaveRequests", "status", "pending")]);
-      if (p.length || sh.length || l.length) {
-        const lines = [
-          ...p.map(q => `⏱ ${q.name}　${q.date.slice(5)} 補${q.type === "in" ? "上班" : "下班"}卡 ${q.time}`),
-          ...sh.map(q => `➕ ${q.name}　${q.date.slice(5)} 加班 ${q.shiftName}`),
-          ...l.map(q => `🗓 ${q.name}　${q.date.slice(5)} ${q.leaveType}`)
-        ];
-        const title = [p.length ? `補打卡 ${p.length}` : "", sh.length ? `加班 ${sh.length}` : "", l.length ? `請假 ${l.length}` : ""].filter(Boolean).join("・");
-        result.digest = await toAdmins(card(`🌅 今日待審核：${title}`, "簽核中心", lines.slice(0, 10).join("\n") + (lines.length > 10 ? `\n…共 ${lines.length} 筆` : ""), "前往審核", `${LIFF}?view=approvals`));
-      }
+      const msg = await buildDailyReport(fs, today, LIFF);
+      if (msg) result.digest = await toAdmins(msg);
       if (!manual) await fs.patchPath(`reminders/${today}`, { digestSent: true });
     }
   }
