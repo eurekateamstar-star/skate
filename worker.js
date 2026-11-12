@@ -510,8 +510,8 @@ async function buildDailyReport(fs, today, LIFF) {
   const LV = x => Object.fromEntries(Object.entries(x.leave || {}).filter(([k, v]) => k !== "id" && k !== "_updateTime" && v));
   const work = x => (x.shiftIds || []).map(id => S[id]).filter(s => s && s.cat !== "leave" && s.start && s.end && !LV(x)[s.id]);
 
-  // 昨天沒打卡
-  const missed = [];
+  // 昨天沒打卡（依人分組）
+  const missMap = {};
   for (const x of schY) {
     if (!E[x.empId]) continue;
     for (const s of work(x)) {
@@ -519,59 +519,92 @@ async function buildDailyReport(fs, today, LIFF) {
       const req = t => p.some(q => q.empId === x.empId && q.date === yest && q.shiftId === s.id && q.type === t);
       const lack = ["in", "out"].filter(t => !has(t));
       if (!lack.length) continue;
-      const what = lack.length === 2 ? "沒打卡" : lack[0] === "in" ? "缺上班卡" : "缺下班卡";
-      missed.push({ name: E[x.empId].name, st: s.start, txt: `${short(s.name)} ${s.start}–${s.end}・${what}${lack.every(req) ? "（已申請補卡）" : ""}` });
+      const st = lack.length === 2 ? "沒打卡" : lack[0] === "in" ? "缺上班卡" : "缺下班卡";
+      (missMap[x.empId] ??= { name: E[x.empId].name, items: [] }).items.push({
+        label: `${short(s.name)} ${s.start}`, st: st + (lack.every(req) ? "（已申請補卡）" : ""),
+        color: lack.every(req) ? "#8e8e93" : lack.length === 2 ? "#d70015" : "#c76a00", t: s.start });
     }
   }
-  missed.sort((a, b) => a.st.localeCompare(b.st));
+  const missed = Object.values(missMap).map(m => (m.items.sort((a, b) => a.t.localeCompare(b.t)), m))
+    .sort((a, b) => b.items.length - a.items.length || a.items[0].t.localeCompare(b.items[0].t));
+  const missCnt = missed.reduce((n, m) => n + m.items.length, 0);
 
-  // 今天上班（同一人多個班合併）、今天請假
+  // 今天上班（一人一列，多個班往下排）、今天請假
   const working = [], offToday = [];
   for (const x of schT) {
     if (!E[x.empId]) continue;
     const ws = work(x).sort((a, b) => a.start.localeCompare(b.start));
-    if (ws.length) working.push({ name: E[x.empId].name, st: ws[0].start, txt: ws.map(s => `${short(s.name)} ${s.start}`).join("、") });
+    if (ws.length) working.push({ name: E[x.empId].name, t: ws[0].start, items: ws.map(s => [short(s.name), s.start]) });
     const lv = Object.entries(LV(x)).filter(([sid]) => S[sid]);
-    if (lv.length) offToday.push({ name: E[x.empId].name, txt: `${[...new Set(lv.map(([, t]) => t))].join("、")}・${lv.map(([sid]) => short(S[sid].name)).join("、")}` });
+    if (lv.length) offToday.push({ name: E[x.empId].name, pill: [...new Set(lv.map(([, t]) => t))].join("、"), sub: lv.map(([sid]) => short(S[sid].name)).join("、") });
   }
-  working.sort((a, b) => a.st.localeCompare(b.st) || a.name.localeCompare(b.name));
+  working.sort((a, b) => a.t.localeCompare(b.t) || a.name.localeCompare(b.name));
 
-  // 本週請假（每人每天一列）
+  // 未來 7 日請假（每人每天一張）
   const offWeek = schW.filter(x => E[x.empId] && Object.keys(LV(x)).length)
-    .map(x => ({ name: E[x.empId].name, date: x.date, txt: `${mdw(x.date)} ${[...new Set(Object.values(LV(x)))].join("、")}` }))
+    .map(x => { const lv = Object.entries(LV(x)); return { name: E[x.empId].name, date: x.date, pill: mdw(x.date),
+      sub: lv.map(([sid]) => short(S[sid]?.name)).filter(Boolean).join("、") || "整天", right: [...new Set(lv.map(([, t]) => t))].join("、") }; })
     .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
 
   const pend = [p.length ? `補打卡 ${p.length}` : "", sh.length ? `加班 ${sh.length}` : "", l.length ? `請假 ${l.length}` : ""].filter(Boolean).join("・");
   if (!missed.length && !working.length && !offToday.length && !offWeek.length && !pend) return null;
 
-  const MAX = 12;
-  const row = (name, txt) => ({ type: "box", layout: "horizontal", spacing: "md", margin: "sm", contents: [
-    { type: "text", text: name, weight: "bold", size: "sm", color: "#1d1d1f", flex: 0 },
-    { type: "text", text: txt, size: "xs", color: "#6e6e73", align: "end", wrap: true, flex: 1, gravity: "center" }
+  // ---- 版面：D 深色標頭＋數字，內容 C 依人分組，上班精簡一人一列 ----
+  const GRAY = "#6e6e73", MAXC = 8, MAXR = 15;
+  const txt = (text, o = {}) => ({ type: "text", text: String(text), size: "sm", color: "#1d1d1f", wrap: true, ...o });
+  const pill = (text, color, bg) => ({ type: "box", layout: "vertical", flex: 0, backgroundColor: bg, cornerRadius: "8px", paddingStart: "8px", paddingEnd: "8px", paddingTop: "1px", paddingBottom: "1px",
+    contents: [txt(text, { size: "xxs", weight: "bold", color, wrap: false })] });
+  const cardBox = (name, pl, lines) => ({ type: "box", layout: "vertical", backgroundColor: "#f6f6f8", cornerRadius: "12px", paddingAll: "10px", margin: "sm", spacing: "xs", contents: [
+    { type: "box", layout: "horizontal", alignItems: "center", contents: [txt(name, { weight: "bold", flex: 1 }), pl] },
+    ...lines.map(([l, r, rc]) => ({ type: "box", layout: "horizontal", spacing: "sm", contents: [txt(l || "－", { size: "xs", color: GRAY, flex: 1 }), ...(r ? [txt(r, { size: "xs", color: rc || GRAY, flex: 0, align: "end", wrap: false })] : [])] }))
   ] });
-  const section = (title, color, list, empty) => [
-    { type: "separator", margin: "lg", color: "#ececf0" },
-    { type: "text", text: title, weight: "bold", size: "sm", color, margin: "lg" },
-    ...(list.length ? list.slice(0, MAX).map(x => row(x.name, x.txt)) : [{ type: "text", text: empty, size: "xs", color: "#aeaeb2", margin: "sm" }]),
-    ...(list.length > MAX ? [{ type: "text", text: `…另外 ${list.length - MAX} 筆`, size: "xs", color: "#aeaeb2", margin: "sm" }] : [])
-  ];
-  const body = [
-    { type: "text", text: `${mdw(today).replace("(", "（").replace(")", "）")}野馬溜冰隊`, size: "xs", color: "#8e8e93" },
-    { type: "text", text: "📋 今日工作會報", weight: "bold", size: "xl", color: "#1d1d1f", margin: "xs" },
-    ...section(`⚠️ 昨天沒打卡（${missed.length}）`, "#d70015", missed, "全部都有打卡 👍"),
-    ...section(`👥 今天上班（${working.length}）`, "#0068e0", working, "今天沒有排班"),
-    ...section(`🌴 今天請假（${offToday.length}）`, "#e07800", offToday, "沒有人請假"),
-    ...section(`📅 未來 7 日請假 ${md(wkFrom)}–${md(wkTo)}`, "#7a5af8", offWeek, "未來 7 天沒有人請假")
-  ];
-  if (pend) body.push({ type: "separator", margin: "lg", color: "#ececf0" },
-    { type: "box", layout: "baseline", margin: "lg", contents: [
-      { type: "text", text: "📝 待審核：", size: "sm", color: "#1d1d1f", flex: 0 },
-      { type: "text", text: pend, size: "sm", weight: "bold", color: "#d70015", flex: 0, margin: "sm" }] });
+  const head = (t, color) => [{ type: "separator", margin: "lg", color: "#ececf0" }, txt(t, { weight: "bold", color, margin: "lg" })];
+  const empty = t => txt(t, { size: "xs", color: "#aeaeb2", margin: "sm" });
+  const more = (n, unit) => n > 0 ? [txt(`…另外 ${n} ${unit}`, { size: "xs", color: "#aeaeb2", margin: "sm" })] : [];
+
+  const body = [];
+  body.push(txt(`⚠️ 昨天沒打卡（${missed.length} 人・${missCnt} 個班）`, { weight: "bold", color: "#d70015" }));
+  if (missed.length) missed.slice(0, MAXC).forEach(m => body.push(cardBox(m.name, pill(`${m.items.length} 個班`, "#d70015", "#ffecec"), m.items.map(i => [i.label, i.st, i.color]))));
+  else body.push(empty("全部都有打卡 👍"));
+  body.push(...more(missed.length - MAXC, "人"));
+
+  body.push(...head(`👥 今天上班（${working.length} 人）`, "#0068e0"));
+  if (working.length) working.slice(0, MAXR).forEach((w, i) => body.push({ type: "box", layout: "horizontal", spacing: "md", paddingTop: "6px", paddingBottom: "6px", contents: [
+    txt(w.name, { weight: "bold", flex: 0, wrap: false }),
+    { type: "box", layout: "vertical", flex: 1, contents: w.items.map(([n, t]) => ({ type: "text", size: "xs", align: "end", wrap: true, contents: [
+      { type: "span", text: n + " ", color: "#555555" }, { type: "span", text: t, color: "#0068e0", weight: "bold" }] })) }
+  ] }, ...(i < Math.min(working.length, MAXR) - 1 ? [{ type: "separator", color: "#f2f2f5" }] : [])));
+  else body.push(empty("今天沒有排班"));
+  body.push(...more(working.length - MAXR, "人"));
+
+  body.push(...head(`🌴 今天請假（${offToday.length}）`, "#e07800"));
+  if (offToday.length) offToday.slice(0, MAXC).forEach(o => body.push(cardBox(o.name, pill(o.pill, "#c76a00", "#fff1dc"), [[o.sub, ""]])));
+  else body.push(empty("沒有人請假"));
+  body.push(...more(offToday.length - MAXC, "人"));
+
+  body.push(...head(`📅 未來 7 日請假 ${md(wkFrom)}–${md(wkTo)}`, "#7a5af8"));
+  if (offWeek.length) offWeek.slice(0, MAXC).forEach(o => body.push(cardBox(o.name, pill(o.pill, "#7a5af8", "#f0ecff"), [[o.sub, o.right]])));
+  else body.push(empty("未來 7 天沒有人請假"));
+  body.push(...more(offWeek.length - MAXC, "筆"));
+
+  if (pend) body.push({ type: "separator", margin: "lg", color: "#ececf0" }, { type: "text", margin: "lg", size: "sm", wrap: true, contents: [
+    { type: "span", text: "📝 待審核：" }, { type: "span", text: pend, weight: "bold", color: "#d70015" }] });
+
+  const kpi = (n, label, color) => ({ type: "box", layout: "vertical", flex: 1, backgroundColor: "#ffffff1f", cornerRadius: "10px", paddingAll: "8px", contents: [
+    txt(n, { size: "xl", weight: "bold", color, wrap: false }), txt(label, { size: "xxs", color: "#ffffff", wrap: false })] });
   return {
     type: "flex",
-    altText: `📋 ${md(today)} 今日工作會報：昨天沒打卡 ${missed.length}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
+    altText: `📋 ${md(today)} 今日工作彙報：昨天沒打卡 ${missCnt}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
     contents: {
       type: "bubble", size: "mega",
+      header: { type: "box", layout: "vertical", paddingAll: "18px",
+        background: { type: "linearGradient", angle: "135deg", startColor: "#1d1d1f", endColor: "#3a0d12" },
+        contents: [
+          txt(`${mdw(today).replace("(", "（").replace(")", "）")}野馬溜冰隊`, { size: "xs", color: "#ffffffaa" }),
+          txt("📋 今日工作彙報", { size: "xl", weight: "bold", color: "#ffffff", margin: "xs" }),
+          { type: "box", layout: "horizontal", spacing: "sm", margin: "lg", contents: [
+            kpi(missCnt, "昨天沒打卡", "#ff5b6b"), kpi(working.length, "今天上班", "#ffffff"), kpi(offToday.length, "今天請假", "#ffb020"), kpi(offWeek.length, "7日內請假", "#b9a6ff")] }
+        ] },
       body: { type: "box", layout: "vertical", paddingAll: "18px", contents: body },
       footer: { type: "box", layout: "vertical", paddingTop: "0px", contents: [
         { type: "button", style: "primary", color: "#0068e0", height: "sm",
