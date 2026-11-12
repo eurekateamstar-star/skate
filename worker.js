@@ -501,7 +501,9 @@ async function buildDailyReport(fs, today, LIFF) {
   const S = Object.fromEntries(shifts.map(x => [x.id, x]));
   const E = Object.fromEntries(emps.filter(e => e.active !== false && !e.dev).map(e => [e.id, e]));
   const short = n => { n = String(n || ""); const m = /^學校課堂\((.+)\)$/.exec(n); return m ? m[1] : n.replace("溜冰場", ""); };
-  const work = x => (x.shiftIds || []).map(id => S[id]).filter(s => s && s.cat !== "leave" && s.start && s.end && !x.leave?.[s.id]);
+  // decode() 會在 map 裡多放 id／_updateTime，請假清單要排除
+  const LV = x => Object.fromEntries(Object.entries(x.leave || {}).filter(([k, v]) => k !== "id" && k !== "_updateTime" && v));
+  const work = x => (x.shiftIds || []).map(id => S[id]).filter(s => s && s.cat !== "leave" && s.start && s.end && !LV(x)[s.id]);
 
   // 昨天沒打卡
   const missed = [];
@@ -524,14 +526,14 @@ async function buildDailyReport(fs, today, LIFF) {
     if (!E[x.empId]) continue;
     const ws = work(x).sort((a, b) => a.start.localeCompare(b.start));
     if (ws.length) working.push({ name: E[x.empId].name, st: ws[0].start, txt: ws.map(s => `${short(s.name)} ${s.start}`).join("、") });
-    const lv = Object.entries(x.leave || {}).filter(([sid]) => S[sid]);
+    const lv = Object.entries(LV(x)).filter(([sid]) => S[sid]);
     if (lv.length) offToday.push({ name: E[x.empId].name, txt: `${[...new Set(lv.map(([, t]) => t))].join("、")}・${lv.map(([sid]) => short(S[sid].name)).join("、")}` });
   }
   working.sort((a, b) => a.st.localeCompare(b.st) || a.name.localeCompare(b.name));
 
   // 本週請假（每人每天一列）
-  const offWeek = schW.filter(x => E[x.empId] && Object.keys(x.leave || {}).length)
-    .map(x => ({ name: E[x.empId].name, date: x.date, txt: `${mdw(x.date)} ${[...new Set(Object.values(x.leave))].join("、")}` }))
+  const offWeek = schW.filter(x => E[x.empId] && Object.keys(LV(x)).length)
+    .map(x => ({ name: E[x.empId].name, date: x.date, txt: `${mdw(x.date)} ${[...new Set(Object.values(LV(x)))].join("、")}` }))
     .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
 
   const pend = [p.length ? `補打卡 ${p.length}` : "", sh.length ? `加班 ${sh.length}` : "", l.length ? `請假 ${l.length}` : ""].filter(Boolean).join("・");
