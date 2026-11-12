@@ -591,7 +591,7 @@ async function buildDailyReport(fs, today, LIFF) {
     { type: "span", text: "📝 待審核：" }, { type: "span", text: pend, weight: "bold", color: "#d70015" }] });
 
   const kpi = (n, label, color) => ({ type: "box", layout: "vertical", flex: 1, backgroundColor: "#ffffff1f", cornerRadius: "10px", paddingAll: "7px", contents: [
-    txt(n, { size: "xl", weight: "bold", color, wrap: false }), txt(label, { size: "xxs", color: "#ffffff", wrap: false })] });
+    txt(n, { size: "xl", weight: "bold", color, wrap: false, align: "center" }), txt(label, { size: "xxs", color: "#ffffff", wrap: false, align: "center" })] });
   return {
     type: "flex",
     altText: `📋 ${md(today)} 今日工作彙報：昨天沒打卡 ${missCnt}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
