@@ -590,7 +590,7 @@ async function buildDailyReport(fs, today, LIFF) {
   if (pend) body.push({ type: "separator", margin: "lg", color: "#ececf0" }, { type: "text", margin: "lg", size: "sm", wrap: true, contents: [
     { type: "span", text: "📝 待審核：" }, { type: "span", text: pend, weight: "bold", color: "#d70015" }] });
 
-  const kpi = (n, label, color) => ({ type: "box", layout: "vertical", flex: 1, backgroundColor: "#ffffff1f", cornerRadius: "10px", paddingAll: "8px", contents: [
+  const kpi = (n, label, color) => ({ type: "box", layout: "vertical", flex: 1, backgroundColor: "#ffffff1f", cornerRadius: "10px", paddingAll: "7px", contents: [
     txt(n, { size: "xl", weight: "bold", color, wrap: false }), txt(label, { size: "xxs", color: "#ffffff", wrap: false })] });
   return {
     type: "flex",
@@ -603,7 +603,7 @@ async function buildDailyReport(fs, today, LIFF) {
           txt(`${mdw(today).replace("(", "（").replace(")", "）")}野馬溜冰隊`, { size: "xs", color: "#ffffffaa" }),
           txt("📋 今日工作彙報", { size: "xl", weight: "bold", color: "#ffffff", margin: "xs" }),
           { type: "box", layout: "horizontal", spacing: "sm", margin: "lg", contents: [
-            kpi(missCnt, "昨天沒打卡", "#ff5b6b"), kpi(working.length, "今天上班", "#ffffff"), kpi(offToday.length, "今天請假", "#ffb020"), kpi(offWeek.length, "7日內請假", "#b9a6ff")] }
+            kpi(missCnt, "昨日缺卡", "#ff5b6b"), kpi(working.length, "今日上班", "#ffffff"), kpi(offToday.length, "今日請假", "#ffb020"), kpi(offWeek.length, "七日請假", "#b9a6ff")] }
         ] },
       body: { type: "box", layout: "vertical", paddingAll: "18px", contents: body },
       footer: { type: "box", layout: "vertical", paddingTop: "0px", contents: [
