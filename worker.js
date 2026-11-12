@@ -482,7 +482,7 @@ async function loadPlan(fs, today, force) {
   return { doc, plan };
 }
 
-/* ---------- 早安報告（方案 1：清單式）---------- */
+/* ---------- 今日工作會報（每天 8:00）---------- */
 async function buildDailyReport(fs, today, LIFF) {
   const W = "日一二三四五六";
   const D = ds => new Date(ds + "T00:00:00Z");
@@ -490,7 +490,7 @@ async function buildDailyReport(fs, today, LIFF) {
   const md = ds => `${+ds.slice(5, 7)}/${+ds.slice(8)}`;
   const mdw = ds => `${md(ds)}(${W[D(ds).getUTCDay()]})`;
   const yest = add(today, -1);
-  const dow = D(today).getUTCDay(), wkFrom = add(today, -((dow + 6) % 7)), wkTo = add(wkFrom, 6);   // 週一～週日
+  const wkFrom = today, wkTo = add(today, 6);   // 未來 7 日（含今天）
 
   const [shifts, emps, schY, schT, schW, attY, p, sh, l] = await Promise.all([
     fs.list("shiftTypes"), fs.list("employees"),
@@ -500,7 +500,12 @@ async function buildDailyReport(fs, today, LIFF) {
   ]);
   const S = Object.fromEntries(shifts.map(x => [x.id, x]));
   const E = Object.fromEntries(emps.filter(e => e.active !== false && !e.dev).map(e => [e.id, e]));
-  const short = n => { n = String(n || ""); const m = /^學校課堂\((.+)\)$/.exec(n); return m ? m[1] : n.replace("溜冰場", ""); };
+  // 班別名稱縮短：學校課堂(麗小)→麗小、迎風溜冰場→迎風、拿掉名稱裡的「(1830-1900)三五」
+  const short = n => {
+    n = String(n || "").replace(/\(\d{3,4}-\d{3,4}\)[一二三四五六日]*/g, "").trim();
+    const m = /^學校課堂\((.+)\)$/.exec(n);
+    return m ? m[1] : n.replace("溜冰場", "");
+  };
   // decode() 會在 map 裡多放 id／_updateTime，請假清單要排除
   const LV = x => Object.fromEntries(Object.entries(x.leave || {}).filter(([k, v]) => k !== "id" && k !== "_updateTime" && v));
   const work = x => (x.shiftIds || []).map(id => S[id]).filter(s => s && s.cat !== "leave" && s.start && s.end && !LV(x)[s.id]);
@@ -551,12 +556,12 @@ async function buildDailyReport(fs, today, LIFF) {
     ...(list.length > MAX ? [{ type: "text", text: `…另外 ${list.length - MAX} 筆`, size: "xs", color: "#aeaeb2", margin: "sm" }] : [])
   ];
   const body = [
-    { type: "text", text: `${mdw(today).replace("(", "（").replace(")", "）")}早安報告`, size: "xs", color: "#8e8e93" },
-    { type: "text", text: "☀️ 今日出勤摘要", weight: "bold", size: "xl", color: "#1d1d1f", margin: "xs" },
+    { type: "text", text: `${mdw(today).replace("(", "（").replace(")", "）")}野馬溜冰隊`, size: "xs", color: "#8e8e93" },
+    { type: "text", text: "📋 今日工作會報", weight: "bold", size: "xl", color: "#1d1d1f", margin: "xs" },
     ...section(`⚠️ 昨天沒打卡（${missed.length}）`, "#d70015", missed, "全部都有打卡 👍"),
     ...section(`👥 今天上班（${working.length}）`, "#0068e0", working, "今天沒有排班"),
     ...section(`🌴 今天請假（${offToday.length}）`, "#e07800", offToday, "沒有人請假"),
-    ...section(`📅 本週請假 ${md(wkFrom)}–${md(wkTo)}`, "#7a5af8", offWeek, "本週沒有人請假")
+    ...section(`📅 未來 7 日請假 ${md(wkFrom)}–${md(wkTo)}`, "#7a5af8", offWeek, "未來 7 天沒有人請假")
   ];
   if (pend) body.push({ type: "separator", margin: "lg", color: "#ececf0" },
     { type: "box", layout: "baseline", margin: "lg", contents: [
@@ -564,7 +569,7 @@ async function buildDailyReport(fs, today, LIFF) {
       { type: "text", text: pend, size: "sm", weight: "bold", color: "#d70015", flex: 0, margin: "sm" }] });
   return {
     type: "flex",
-    altText: `☀️ ${md(today)} 早安報告：昨天沒打卡 ${missed.length}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
+    altText: `📋 ${md(today)} 今日工作會報：昨天沒打卡 ${missed.length}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
     contents: {
       type: "bubble", size: "mega",
       body: { type: "box", layout: "vertical", paddingAll: "18px", contents: body },
