@@ -590,24 +590,25 @@ async function buildDailyReport(fs, today, LIFF) {
   if (pend) body.push({ type: "separator", margin: "lg", color: "#ececf0" }, { type: "text", margin: "lg", size: "sm", wrap: true, contents: [
     { type: "span", text: "📝 待審核：" }, { type: "span", text: pend, weight: "bold", color: "#d70015" }] });
 
-  const kpi = (n, label, color) => ({ type: "box", layout: "vertical", flex: 1, backgroundColor: "#ffffff1f", cornerRadius: "10px", paddingAll: "7px", contents: [
-    txt(n, { size: "xl", weight: "bold", color, wrap: false, align: "center" }), txt(label, { size: "xxs", color: "#ffffff", wrap: false, align: "center" })] });
+  // 樣式 8・紅黑撞色：紅色標題列＋黑色數字列
+  const kpi = (n, label, color) => ({ type: "box", layout: "vertical", flex: 1, backgroundColor: "#2a2a2e", cornerRadius: "10px", paddingAll: "7px", contents: [
+    txt(n, { size: "xl", weight: "bold", color, wrap: false, align: "center" }), txt(label, { size: "xxs", color: "#bdbdc2", wrap: false, align: "center" })] });
   return {
     type: "flex",
     altText: `📋 ${md(today)} 今日工作彙報：昨天沒打卡 ${missCnt}・今天上班 ${working.length}・請假 ${offToday.length}${pend ? `・待審核 ${pend}` : ""}`,
     contents: {
       type: "bubble", size: "mega",
-      header: { type: "box", layout: "vertical", paddingAll: "18px",
-        background: { type: "linearGradient", angle: "135deg", startColor: "#1d1d1f", endColor: "#3a0d12" },
-        contents: [
-          txt(`${mdw(today).replace("(", "（").replace(")", "）")}野馬溜冰隊`, { size: "xs", color: "#ffffffaa" }),
-          txt("📋 今日工作彙報", { size: "xl", weight: "bold", color: "#ffffff", margin: "xs" }),
-          { type: "box", layout: "horizontal", spacing: "sm", margin: "lg", contents: [
-            kpi(missCnt, "昨日缺卡", "#ff5b6b"), kpi(working.length, "今日上班", "#ffffff"), kpi(offToday.length, "今日請假", "#ffb020"), kpi(offWeek.length, "七日請假", "#b9a6ff")] }
+      header: { type: "box", layout: "vertical", paddingAll: "0px", contents: [
+        { type: "box", layout: "vertical", backgroundColor: "#d70015", paddingAll: "18px", paddingBottom: "14px", contents: [
+          txt(`${mdw(today).replace("(", "（").replace(")", "）")}野馬溜冰隊`, { size: "xs", color: "#ffffffcc" }),
+          txt("📋 今日工作彙報", { size: "xl", weight: "bold", color: "#ffffff", margin: "xs" })
         ] },
+        { type: "box", layout: "horizontal", spacing: "sm", backgroundColor: "#1d1d1f", paddingAll: "12px", paddingStart: "18px", paddingEnd: "18px", contents: [
+          kpi(missCnt, "昨日缺卡", "#ff5b6b"), kpi(working.length, "今日上班", "#ffffff"), kpi(offToday.length, "今日請假", "#ffb020"), kpi(offWeek.length, "七日請假", "#b9a6ff")] }
+      ] },
       body: { type: "box", layout: "vertical", paddingAll: "18px", contents: body },
       footer: { type: "box", layout: "vertical", paddingTop: "0px", contents: [
-        { type: "button", style: "primary", color: "#0068e0", height: "sm",
+        { type: "button", style: "primary", color: "#1d1d1f", height: "sm",
           action: { type: "uri", label: pend ? "前往簽核中心" : "查看今日上班", uri: `${LIFF}?view=${pend ? "approvals" : "today"}` } }
       ] }
     }
