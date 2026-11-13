@@ -858,7 +858,7 @@ async function push(env, to, message) {
 
 /* ---------- LINE 訊息 → AI 填申請 ---------- */
 const LV_TYPES = ["事假", "病假", "特休", "公假", "其他"];
-const ASK_RE = /請假|休假|事假|病假|喪假|婚假|特休|公假|換班|調班|代班|代課|加班|加課|支援|補班|不能去|不能來|沒辦法去|沒辦法來|無法到|上不了|請幫我排|幫我排|我要加|幫我加|多加|加一|加個|要上|我要上|交通車|接送車|接送|夜訓|晨訓|加強班/;
+const ASK_RE = /請假|休假|事假|病假|喪假|婚假|特休|公假|換班|調班|代班|代課|加班|加課|支援|補班|不能去|不能來|沒辦法去|沒辦法來|無法到|上不了|請幫我排|幫我排|我要加|幫我加|多加|加一|加個|要上|我要上|交通車|接送車|接送|夜訓|晨訓|加強班|少了|少一|漏了|漏排|沒排到|沒有排到|沒排我/;
 // 用 replyToken 回覆（免費）；token 過期才改用 push（算訊息額度）
 async function reply(env, ev, messages) {
   const msgs = Array.isArray(messages) ? messages : [messages];
@@ -918,7 +918,8 @@ ${staff.map((e, i) => `E${i + 1}=${e.name}`).join("\n")}
 
 規則：
 - 請假、休假、不能去、換班、找人代班 → intent=leave。換班／代班就把代班的人填在 sub。
-- 加班、加課、支援、幫我排某個班、「我要加一個夜訓」「今天的 1830 交通車」→ intent=shift，shifts 填要加的班別代號。
+- 加班、加課、支援、幫我排某個班、「我要加一個夜訓」「今天的 1830 交通車」「我今天少了一個 1830 的交通車」「班表漏排／沒排到」→ intent=shift，shifts 填要加的班別代號。
+- 員工會用口語，例如「明天可以幫我加一個夜訓嗎謝謝」「明天我要請假」，客氣話、語助詞忽略即可。
 - 員工常用的說法：「交通車」「接送」＝班別名稱裡的「接送車」或「交通車」；「1830」「18:30」「六點半」＝上班時間 18:30。
   例如「1830 的交通車」→ 找名稱有接送車／交通車、而且上班時間是 18:30 的班（像 接送車去程(1830-1900)）；「2040 回程」→ 上班時間 20:40 的回程車。
   「夜訓」「晨訓」「下午」「加強班」就找名稱有這幾個字的班；同名有好幾個時，選那個日期的星期幾適用的（名稱後面的「三五」「六日」代表星期三五、六日）。
@@ -942,24 +943,41 @@ ${staff.map((e, i) => `E${i + 1}=${e.name}`).join("\n")}
   const code = c => { const m = /^S(\d+)$/i.exec(String(c || "").trim()); return m ? S[+m[1] - 1] : S.find(x => x.name === c); };
   const ecode = c => { const m = /^E(\d+)$/i.exec(String(c || "").trim()); return m ? staff[+m[1] - 1] : staff.find(e => e.name === c); };
   const isD = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && d >= today && d <= add(today, 120);
-  const items = [];
+  // 逐筆檢查：沒排班、班別不對、已經在班表、時段衝突 → 用口語回覆說明
+  const SN0 = Object.fromEntries(shifts.map(x => [x.id, x]));
+  const lab = ds => ds === today ? "今天" : ds === add(today, 1) ? "明天" : ds === add(today, 2) ? "後天" : `${+ds.slice(5, 7)}/${+ds.slice(8)}（${wd(ds)}）`;
+  const tm = t => t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
+  const nm = id => SN0[id]?.name || "";
+  const tt = id => SN0[id]?.start ? ` ${SN0[id].start}–${SN0[id].end}` : "";
+  const items = [], notes = [];
   for (const it of (data.items || []).slice(0, 14)) {
     if (!isD(it.date)) continue;
     const day = mine.find(x => x.date === it.date), lv = day ? LV(day) : {};
-    const dayIds = (day?.shiftIds || []).filter(id => !lv[id]);
+    const dayIds = (day?.shiftIds || []).filter(id => !lv[id] && SN0[id]);
     if (data.intent === "leave") {
-      let ids = (it.shifts || []).map(code).filter(Boolean).map(x => x.id).filter(id => dayIds.includes(id));
-      if (!ids.length) ids = dayIds.filter(id => S.some(x => x.id === id));
-      if (!ids.length) continue;
+      const want = (it.shifts || []).map(code).filter(Boolean).map(x => x.id);
+      if (!dayIds.length) { notes.push(Object.keys(lv).length ? `${lab(it.date)}的班你已經請過假囉，不用再請一次 🙂` : `${lab(it.date)}你沒有排班，不用請假喔 🙂 如果是班表排錯了，再跟管理員說一聲。`); continue; }
+      let ids = want.filter(id => dayIds.includes(id));
+      if (want.length && !ids.length) { notes.push(`${lab(it.date)}你沒有排「${want.map(nm).join("、")}」喔，你${lab(it.date)}排的是：${dayIds.map(id => nm(id) + tt(id)).join("、")}。要請哪一個再跟我說一次～`); continue; }
+      if (!ids.length) ids = dayIds;
       const sub = it.sub ? ecode(it.sub) : null;
       items.push({ date: it.date, shiftIds: ids, leaveType: LV_TYPES.includes(it.leaveType) ? it.leaveType : "事假", subId: sub?.id || "", subName: sub?.name || "" });
     } else {
-      for (const sh of (it.shifts || []).map(code).filter(Boolean)) if (!dayIds.includes(sh.id)) items.push({ date: it.date, shiftId: sh.id });
+      const want = (it.shifts || []).map(code).filter(Boolean);
+      if (!want.length) { notes.push(`${lab(it.date)}要加哪一個班呢？可以寫班別或時間，例如「${lab(it.date)} 1830 交通車」或「${lab(it.date)} 迎風夜訓」～`); continue; }
+      for (const sh of want) {
+        if (dayIds.includes(sh.id)) { notes.push(`${lab(it.date)}的「${sh.name}」已經在你的班表上囉，時間到直接打卡就可以了 👍`); continue; }
+        const clash = dayIds.find(id => { const a = SN0[id]; return a?.start && a?.end && sh.start && sh.end && tm(sh.start) < tm(a.end) && tm(a.start) < tm(sh.end); });
+        if (clash) { notes.push(`${lab(it.date)}你已經有「${nm(clash)}${tt(clash)}」，跟「${sh.name}${tt(sh.id)}」時間重疊（衝堂），沒辦法加喔。需要調整的話請跟管理員說。`); continue; }
+        if (items.some(x => x.date === it.date && x.shiftId === sh.id)) continue;
+        items.push({ date: it.date, shiftId: sh.id });
+      }
     }
   }
-  if (!items.length) return reply(env, ev, { type: "text", text: data.intent === "leave"
-    ? "收到！不過那天你好像沒有排班，或我看不出是哪一天。請直接到打卡系統的「請假」填寫，或寫清楚日期再傳一次（例如：11/19 夜訓請假）。"
-    : "收到！不過我看不出要加哪一天、哪個班。請寫清楚再傳一次（例如：11/20 迎風夜訓幫我加班）。" });
+  const noteMsg = notes.length ? [{ type: "text", text: notes.slice(0, 5).join("\n\n") }] : [];
+  if (!items.length) return reply(env, ev, noteMsg.length ? noteMsg : { type: "text", text: data.intent === "leave"
+    ? "收到！不過我看不出是哪一天要請假耶，可以再說清楚一點嗎？例如「明天夜訓要請假」或「11/19 請病假」～"
+    : "收到！不過我看不出要加哪一天、哪個班耶，可以再說清楚一點嗎？例如「明天可以幫我加一個夜訓嗎」～" });
   const kind = data.intent, reason = String(data.reason || "").slice(0, 100);
   const id = await fs.add("lineDrafts", { empId: emp.id, name: emp.name, kind, items: JSON.stringify(items), reason, text, status: "draft", createdAt: new Date() });
   const sig = await draftSig(env, id);
@@ -973,7 +991,7 @@ ${staff.map((e, i) => `E${i + 1}=${e.name}`).join("\n")}
     { type: "text", text: md(x.date), weight: "bold", size: "sm", color: "#1d1d1f" },
     { type: "text", text: `${SN[x.shiftId]?.name || ""}${SN[x.shiftId]?.start ? ` ${SN[x.shiftId].start}–${SN[x.shiftId].end}` : ""}`, size: "xs", color: "#6e6e73", wrap: true }
   ] }));
-  await reply(env, ev, { type: "flex", altText: kind === "leave" ? "幫你填好請假申請，請確認" : "幫你填好加班申請，請確認",
+  await reply(env, ev, [...noteMsg, { type: "flex", altText: kind === "leave" ? "幫你填好請假申請，請確認" : "幫你填好加班申請，請確認",
     contents: { type: "bubble", size: "mega",
       header: { type: "box", layout: "vertical", backgroundColor: kind === "leave" ? "#d70015" : "#ff9500", paddingAll: "16px", contents: [
         { type: "text", text: kind === "leave" ? "📝 幫你填好請假申請" : "➕ 幫你填好加班申請", weight: "bold", color: "#ffffff", size: "lg" },
@@ -985,7 +1003,7 @@ ${staff.map((e, i) => `E${i + 1}=${e.name}`).join("\n")}
         { type: "box", layout: "horizontal", spacing: "sm", contents: [
           { type: "button", style: "secondary", height: "sm", action: { type: "postback", label: "取消", data: `x|${id}|${sig}`, displayText: "取消" } },
           { type: "button", style: "secondary", height: "sm", action: { type: "uri", label: "自己修改", uri: `${LIFF}?view=${kind === "leave" ? "leave" : "clock"}` } }] }
-      ] } } });
+      ] } } }]);
 }
 async function handleDraftPostback(env, ev, userId) {
   const [act, id, sig] = String(ev.postback?.data || "").split("|");
@@ -996,7 +1014,7 @@ async function handleDraftPostback(env, ev, userId) {
   if (!d || !emp || d.empId !== emp.id) return;
   if (d.status !== "draft") return reply(env, ev, { type: "text", text: d.status === "sent" ? "這筆已經送出過了，等管理員審核中。" : "這筆已經取消了。" });
   if (Date.now() - Date.parse(d.createdAt) > 24 * 3600e3) { await fs.patchPath(`lineDrafts/${id}`, { status: "expired" }); return reply(env, ev, { type: "text", text: "這筆已經超過 24 小時，請重新傳一次訊息。" }); }
-  if (act === "x") { await fs.patchPath(`lineDrafts/${id}`, { status: "cancelled" }); return reply(env, ev, { type: "text", text: "已取消，沒有送出。" }); }
+  if (act === "x") { await fs.patchPath(`lineDrafts/${id}`, { status: "cancelled" }); return reply(env, ev, { type: "text", text: "好的，已經取消，不會送出喔 👌" }); }
   const items = JSON.parse(d.items || "[]");
   const SN = Object.fromEntries((await fs.list("shiftTypes")).map(x => [x.id, x]));
   const base = { empId: emp.id, name: emp.name, empNo: emp.empNo || "", status: "pending", notified: false, createdAt: new Date(), source: "line", lineDraftId: id };
@@ -1012,7 +1030,7 @@ async function handleDraftPostback(env, ev, userId) {
     }
   }
   await fs.patchPath(`lineDrafts/${id}`, { status: "sent", sentAt: new Date() });
-  await reply(env, ev, { type: "text", text: `✅ 已送出 ${made.length} 筆${d.kind === "leave" ? "請假" : "加班"}申請，等管理員審核。\n審核結果會在打卡系統通知你。` });
+  await reply(env, ev, { type: "text", text: `好的！已經幫你送出 ${made.length} 筆${d.kind === "leave" ? "請假" : "加班"}申請 ✅\n等管理員審核，結果會在打卡系統通知你～` });
   for (const [coll, rid] of made) await notifyNew(env, coll, rid).catch(() => {});
 }
 
