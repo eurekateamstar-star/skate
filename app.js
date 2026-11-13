@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=102";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=103";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -768,7 +768,9 @@ function newMap(L, el) {
 }
 
 // 班別的上班 / 下班打卡地點（沒設定下班地點 = 和上班相同）
-const locFor = (s, type) => locMap[(type === "out" && s?.outLocationId) ? s.outLocationId : s?.locationId];
+// 下班地點 "*" = 下班不限地點
+const OUT_ANY = "*";
+const locFor = (s, type) => type === "out" && s?.outLocationId === OUT_ANY ? undefined : locMap[(type === "out" && s?.outLocationId) ? s.outLocationId : s?.locationId];
 
 // ---- 今日班別打卡 ----
 let clockShifts = [], extraShifts = [], todayRecs = [], clockLeave = {};
@@ -1730,7 +1732,7 @@ function drawShiftRowsDesk() {
       <td><input class="s-end" type="time" value="${esc(s.end || "")}"></td>
       <td>${shiftHours(s) || "—"}${s.breakStart && s.breakEnd ? `<div class="emp-no">休息 ${esc(s.breakStart)}~${esc(s.breakEnd)}</div>` : ""}</td>
       <td><div class="loc-pair"><label><span>上班</span><select class="s-loc">${locOpts(s.locationId || "")}</select></label>
-        <label><span>下班</span><select class="s-oloc">${locOpts(s.outLocationId || "").replace("不限地點", "同上班地點")}</select></label></div></td>
+        <label><span>下班</span><select class="s-oloc">${locOpts(s.outLocationId || "").replace("不限地點</option>", `同上班地點</option><option value="${OUT_ANY}" ${s.outLocationId === OUT_ANY ? "selected" : ""}>不限地點</option>`)}</select></label></div></td>
       <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
       <td><button class="btn small primary s-save">儲存</button> <button class="btn small danger s-del">刪除</button></td>
     </tr>`).join("") : `<tr><td colspan="10" class="empty">尚未建立班別</td></tr>`) + `</tbody></table>`;
@@ -1749,6 +1751,7 @@ function drawShiftRows() {
   $("#shiftList").innerHTML = list.map(s => {
     const leave = s.cat === "leave";
     const loc = leave ? "" : !s.locationId ? `<span class="sh-loc none">不限地點</span>`
+      : s.outLocationId === OUT_ANY ? `<span class="sh-loc">📍 上班 ${esc(ln(s.locationId))} → 下班不限地點</span>`
       : s.outLocationId && s.outLocationId !== s.locationId ? `<span class="sh-loc">📍 上班 ${esc(ln(s.locationId))} → 下班 ${esc(ln(s.outLocationId))}</span>`
       : `<span class="sh-loc">📍 ${esc(ln(s.locationId))}</span>`;
     const h = shiftHours(s);
@@ -1814,7 +1817,8 @@ function openShift(sh) {
   $("#smColors").innerHTML = cols.map(c => `<button type="button" data-c="${c}" style="background:${c}" class="${c === sm.color ? "on" : ""}"></button>`).join("") + `<label class="sm-more" title="其他顏色"><input type="color" id="smColorPick" value="${esc(sm.color)}">＋</label>`;
   const opts = (sel, none) => `<option value="">${none}</option>` + locations.map(l => `<option value="${l.id}" ${sel === l.id ? "selected" : ""}>${esc(l.name)}（${l.radius || 50} 公尺）</option>`).join("");
   $("#smLoc").innerHTML = opts(sh?.locationId || "", "不限地點");
-  $("#smOLoc").innerHTML = opts(sh?.outLocationId || "", "同上班地點");
+  $("#smOLoc").innerHTML = opts(sh?.outLocationId || "", "同上班地點")
+    .replace("</option>", `</option><option value="${OUT_ANY}" ${sh?.outLocationId === OUT_ANY ? "selected" : ""}>不限地點</option>`);
   smCatUI();
   $("#smDel").classList.toggle("hidden", !sh);
   $("#shModal").classList.remove("hidden");
