@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=111";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=112";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -469,6 +469,29 @@ $("#bindForm").onsubmit = async e => {
   }
 };
 
+// LINE 官方帳號 Webhook：讓員工傳訊息請假／加班（設定一次就好）
+$("#lineHookBtn").onclick = async () => {
+  const call = async body => {
+    const r = await fetch(WORKER_URL.replace(/\/$/, "") + "/admin-webhook", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: await auth.currentUser.getIdToken(), ...body }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error === "forbidden" ? "只有管理者可以設定" : r.status === 404 ? "Worker 還沒部署新版本" : (d.error || r.status));
+    return d;
+  };
+  try {
+    toast("檢查中…");
+    const d = await call({});
+    const mine = d.info?.endpoint?.endsWith("/webhook") && d.info.endpoint.includes("punch-auth");
+    const msg = `目前 Webhook 網址：${d.info?.endpoint || "（未設定）"}\nLINE 後台 Webhook：${d.info?.active ? "已開啟" : "未開啟"}\n訊息驗證（Channel secret）：${d.secret ? "已設定" : "未設定（建議設定）"}` +
+      (mine ? "" : "\n\n要把 Webhook 設成打卡系統，讓員工可以用 LINE 傳訊息請假、申請加班嗎？");
+    if (!(await appConfirm("LINE 訊息設定", msg, { okText: mine ? "重新測試" : "設定並測試" }))) return;
+    toast("設定中…");
+    const r = await call({ set: true, test: true });
+    const ok = r.test && r.test.success !== false && !r.test.error;
+    appAlert(ok ? "設定完成" : "已設定，測試沒有通過",
+      `Webhook 網址：${r.info?.endpoint}\nLINE 後台 Webhook：${r.info?.active ? "已開啟 ✓" : "未開啟 ✗（請到 LINE 官方帳號管理後台 → 設定 → 回應設定，打開 Webhook）"}\n測試：${ok ? "成功 ✓" : (r.test?.error || r.test?.reason || "失敗")}`);
+  } catch (err) { appAlert("LINE 訊息設定", err.message || String(err)); }
+};
 $("#viewAsBtn").onclick = () => pickViewAs();
 $("#viewAsBar").onclick = e => {
   if (e.target.closest("#viewAsSwitch")) return pickViewAs();

@@ -26,7 +26,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
-  <link rel="stylesheet" href="style.css?v=111">
+  <link rel="stylesheet" href="style.css?v=112">
 </head>
 <body>
 
@@ -453,7 +453,7 @@
       <section id="view-employees" class="view hidden">
         <div class="view-head">
           <div class="vh-title"><h2>員工管理</h2><div class="vh-sub" id="empSub">點員工可修改資料、權限、解除 LINE 綁定</div></div>
-          <div class="vh-actions mob-only-i"><button class="btn primary" id="empAddBtn">＋ 新增員工</button></div>
+          <div class="vh-actions"><button class="btn" id="lineHookBtn">LINE 訊息設定</button><button class="btn primary mob-only-i" id="empAddBtn">＋ 新增員工</button></div>
         </div>
         <!-- 電腦版：原本的表格 -->
         <div class="desk-only">
@@ -865,6 +865,6 @@
     }
   }, 25000);
 </script>
-<script type="module" src="app.js?v=111"></script>
+<script type="module" src="app.js?v=112"></script>
 </body>
 </html>
