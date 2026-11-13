@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=110";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=111";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -3378,7 +3378,7 @@ async function loadApprovals() {
 }
 function leaveCard(q, done) {
   return `<div class="card ap-item" data-id="${q.id}">
-      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag">${esc(q.leaveType)}</span>${done ? `<span class="tag ok">已核准</span>` : ""}</div>
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag">${esc(q.leaveType)}</span>${q.source === "line" ? `<span class="tag">LINE 申請</span>` : ""}${done ? `<span class="tag ok">已核准</span>` : ""}</div>
       <div class="ap-date">${dayLabel(q.date)}・請 ${(q.shiftIds || []).length} 個班</div>
       <div class="lv-shs">${(q.shiftIds || []).map((sid, i) => `<span>${esc(q.shiftNames?.[i] || shiftMap[sid]?.name || "")}${q.subNames?.[sid] ? ` → <b>${esc(q.subNames[sid])}</b> 代班` : ""}</span>`).join("")}</div>
       ${Object.keys(q.subNames || {}).length ? "" : `<div class="lv-reason">代班：${q.subNeed ? `${esc(q.subName || "有")}（員工填寫，尚未指定）` : "不需代班"}</div>`}
@@ -3395,7 +3395,7 @@ function renderApprovals() {
   const empty = { leave: "目前沒有待審核的請假申請 🎉", punch: "目前沒有待審核的補打卡申請 🎉", shift: "目前沒有待審核的加班申請 🎉", done: "還沒有已核准的請假" }[ap.tab];
   $("#apList").innerHTML = list.map(q => ap.tab === "shift" ? `
     <div class="card ap-item" data-id="${q.id}">
-      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">加班（班表沒排到）</span></div>
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">加班（班表沒排到）</span>${q.source === "line" ? `<span class="tag">LINE 申請</span>` : ""}</div>
       <div class="ap-date">${dayLabel(q.date)}・${esc(q.shiftName)}${shiftMap[q.shiftId]?.start ? `（${shiftMap[q.shiftId].start}–${shiftMap[q.shiftId].end}）` : ""}</div>
       <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准並加入班表</button></div>
     </div>` : ap.tab !== "punch" ? leaveCard(q, ap.tab === "done") : `

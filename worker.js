@@ -63,6 +63,33 @@ export default {
         return json(await notifyNew(env, body.coll, body.id));
       } catch (e) { return json({ error: String(e?.message || e) }, 500); }
     }
+    // LINE 官方帳號 Webhook：員工傳「請假／換班／加班」→ AI 填好 → 員工按確認 → 進簽核中心
+    if (path === "/webhook" && req.method === "POST") {
+      const raw = await req.text();
+      if (env.LINE_CHANNEL_SECRET) {
+        const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.LINE_CHANNEL_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const sig = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)))));
+        if (sig !== req.headers.get("x-line-signature")) return new Response("bad signature", { status: 403 });
+      }
+      let body = {}; try { body = JSON.parse(raw); } catch {}
+      ctx.waitUntil(handleLineEvents(env, body.events || []).catch(e => console.error("webhook", e)));
+      return new Response("OK");
+    }
+    // 管理者：設定／查看 LINE Webhook 網址
+    if (path === "/admin-webhook") {
+      try {
+        const b = await req.json().catch(() => ({}));
+        const uid = await verifyFirebaseToken(b.token, env);
+        const emp = uid && await new Firestore(env).findByLineUid(uid);
+        if (!emp || emp.role !== "admin") return json({ error: "forbidden" }, 403);
+        const endpoint = new URL(req.url).origin + "/webhook";
+        if (b.set) await lineApi(env, "/v2/bot/channel/webhook/endpoint", { method: "PUT", body: JSON.stringify({ endpoint }) });
+        const info = await lineApi(env, "/v2/bot/channel/webhook/endpoint");
+        let test = null;
+        if (b.test) test = await lineApi(env, "/v2/bot/channel/webhook/test", { method: "POST", body: JSON.stringify({ endpoint }) }).catch(e => ({ error: String(e.message || e) }));
+        return json({ ok: true, info, test, secret: !!env.LINE_CHANNEL_SECRET });
+      } catch (e) { return json({ error: String(e?.message || e) }, 500); }
+    }
     // 管理者（從網站登入）重新套用 LINE 圖文選單，不用 SETUP_KEY
     if (path === "/admin-richmenu") {
       try {
@@ -332,6 +359,10 @@ class Firestore {
     } while (pageToken);
     return out;
   }
+  async add(coll, fields) {
+    const d = await this.req(`${this.base}/${coll}`, { method: "POST", body: JSON.stringify({ fields: encodeFields(fields) }) });
+    return d?.name?.split("/").pop();
+  }
   async getPath(path) {
     const d = await this.req(`${this.base}/${path}`);
     return d ? decode(d) : null;
@@ -371,6 +402,8 @@ function encodeFields(obj) {
     else if (v instanceof Date) f[k] = { timestampValue: v.toISOString() };
     else if (typeof v === "boolean") f[k] = { booleanValue: v };
     else if (typeof v === "number") f[k] = Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+    else if (Array.isArray(v)) f[k] = { arrayValue: { values: v.map(x => encodeFields({ x }).x) } };
+    else if (typeof v === "object") f[k] = { mapValue: { fields: encodeFields(v) } };
     else f[k] = { stringValue: String(v) };
   }
   return f;
@@ -822,6 +855,161 @@ async function push(env, to, message) {
   return lineApi(env, "/v2/bot/message/push", { method: "POST", body: JSON.stringify({ to, messages: [message] }) });
 }
 
+
+/* ---------- LINE 訊息 → AI 填申請 ---------- */
+const LV_TYPES = ["事假", "病假", "特休", "公假", "其他"];
+const ASK_RE = /請假|休假|事假|病假|喪假|婚假|特休|公假|換班|調班|代班|代課|加班|加課|支援|補班|不能去|不能來|沒辦法去|沒辦法來|無法到|上不了|請幫我排|幫我排/;
+// 用 replyToken 回覆（免費）；token 過期才改用 push（算訊息額度）
+async function reply(env, ev, messages) {
+  const msgs = Array.isArray(messages) ? messages : [messages];
+  try { return await lineApi(env, "/v2/bot/message/reply", { method: "POST", body: JSON.stringify({ replyToken: ev.replyToken, messages: msgs }) }); }
+  catch (e) {
+    console.error("reply", e);
+    if (ev.source?.userId) return lineApi(env, "/v2/bot/message/push", { method: "POST", body: JSON.stringify({ to: ev.source.userId, messages: msgs }) }).catch(() => {});
+  }
+}
+async function draftSig(env, id) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(env.FIREBASE_PRIVATE_KEY || env.LINE_MESSAGING_TOKEN)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const b = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("draft:" + id)));
+  return [...b.slice(0, 8)].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+async function handleLineEvents(env, events) {
+  for (const ev of events) {
+    const userId = ev.source?.userId;
+    if (!userId || ev.source?.type !== "user") continue;   // 只處理一對一聊天
+    if (ev.type === "message" && ev.message?.type === "text") await handleAskText(env, ev, userId);
+    else if (ev.type === "postback") await handleDraftPostback(env, ev, userId);
+  }
+}
+async function handleAskText(env, ev, userId) {
+  const text = String(ev.message.text || "").trim().slice(0, 600);
+  if (!ASK_RE.test(text) || !env.AI) return;               // 不像請假／加班的訊息 → 不處理，留給管理者手動回覆
+  const fs = new Firestore(env);
+  const emp = await fs.findByLineUid("line:" + userId);
+  const LIFF = "https://liff.line.me/" + (env.LIFF_ID || "2012318362-VOU7aFr9");
+  if (!emp || emp.active === false) return reply(env, ev, { type: "text", text: "請先從下方選單打開打卡系統完成綁定，就可以直接傳訊息請假或申請加班喔！" });
+  // 顯示「輸入中…」動畫，讓員工知道正在處理（免費）
+  lineApi(env, "/v2/bot/chat/loading/start", { method: "POST", body: JSON.stringify({ chatId: userId, loadingSeconds: 20 }) }).catch(() => {});
+  const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+  const add = (ds, n) => { const d = new Date(ds + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const W = "日一二三四五六", wd = ds => W[new Date(ds + "T00:00:00Z").getUTCDay()];
+  const [shifts, emps, sch] = await Promise.all([fs.list("shiftTypes"), fs.list("employees"), fs.whereRange("schedules", "date", today, add(today, 45))]);
+  const S = shifts.filter(x => x.cat !== "leave");
+  const staff = emps.filter(e => e.active !== false && !e.dev && e.id !== emp.id);
+  const LV = x => Object.fromEntries(Object.entries(x.leave || {}).filter(([k, v]) => k !== "id" && k !== "_updateTime" && v));
+  const mine = sch.filter(x => x.empId === emp.id).sort((a, b) => a.date.localeCompare(b.date));
+  const sIdx = Object.fromEntries(S.map((x, i) => [x.id, "S" + (i + 1)]));
+  const mineTxt = mine.map(x => `${x.date}(${wd(x.date)}): ` + (x.shiftIds || []).filter(id => sIdx[id] && !LV(x)[id]).map(id => sIdx[id]).join(" ")).filter(l => !l.endsWith(": ")).join("\n") || "（未來 45 天沒有排班）";
+  const sys = `你是溜冰隊打卡系統的助理。員工 ${emp.name} 用 LINE 傳了訊息，判斷他是要「請假」還是「加班（申請加入一個沒排到的班）」，轉成 JSON。只輸出 JSON。
+
+今天：${today}（${wd(today)}）
+班別清單（代號=名稱｜時間）：
+${S.map((x, i) => `S${i + 1}=${x.name}${x.start && x.end ? `｜${x.start}-${x.end}` : ""}`).join("\n")}
+
+${emp.name} 未來的排班（日期: 班別代號）：
+${mineTxt}
+
+其他員工（代號=姓名）：
+${staff.map((e, i) => `E${i + 1}=${e.name}`).join("\n")}
+
+輸出格式：
+{"intent":"leave 或 shift 或 none","items":[{"date":"YYYY-MM-DD","shifts":["S代號"],"leaveType":"事假|病假|特休|公假|其他","sub":"E代號或null"}],"reason":"原因（訊息裡有寫才填，繁體中文）"}
+
+規則：
+- 請假、休假、不能去、換班、找人代班 → intent=leave。換班／代班就把代班的人填在 sub。
+- 加班、加課、支援、幫我排某個班 → intent=shift，shifts 填要加的班別代號。
+- 日期：「明天」「下週三」「11/19」都換成 YYYY-MM-DD（今天是 ${today}）。只寫星期幾就選今天之後最近的那天。日期區間要展開成每天一筆。
+- 請假的 shifts：有指定班別（例如 夜訓、下午）就填那個；沒指定就填他那天排的全部班。只能選他那天有排的班。
+- leaveType 沒說就用「事假」，生病用「病假」。
+- 只是聊天、問問題、看不出要請假或加班 → intent=none、items=[]。`;
+  let data = null;
+  for (const model of AI_MODELS) {
+    try {
+      const r = await env.AI.run(model, { messages: [{ role: "system", content: sys }, { role: "user", content: text }], max_tokens: 1200, temperature: 0.1,
+        ...(model.includes("llama") ? {} : { chat_template_kwargs: { enable_thinking: false } }) });
+      let out = typeof r === "string" ? r : r?.response ?? r?.choices?.[0]?.message?.content ?? "";
+      if (typeof out !== "string") out = JSON.stringify(out);
+      const m = out.replace(/<think>[\s\S]*?<\/think>/g, "").match(/\{[\s\S]*\}/);
+      if (m) { data = JSON.parse(m[0]); break; }
+    } catch (e) { console.error("ai-line", model, e); }
+  }
+  if (!data || !["leave", "shift"].includes(data.intent)) return;   // 判斷不出來就不回，留給管理者
+  const code = c => { const m = /^S(\d+)$/i.exec(String(c || "").trim()); return m ? S[+m[1] - 1] : S.find(x => x.name === c); };
+  const ecode = c => { const m = /^E(\d+)$/i.exec(String(c || "").trim()); return m ? staff[+m[1] - 1] : staff.find(e => e.name === c); };
+  const isD = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && d >= today && d <= add(today, 120);
+  const items = [];
+  for (const it of (data.items || []).slice(0, 14)) {
+    if (!isD(it.date)) continue;
+    const day = mine.find(x => x.date === it.date), lv = day ? LV(day) : {};
+    const dayIds = (day?.shiftIds || []).filter(id => !lv[id]);
+    if (data.intent === "leave") {
+      let ids = (it.shifts || []).map(code).filter(Boolean).map(x => x.id).filter(id => dayIds.includes(id));
+      if (!ids.length) ids = dayIds.filter(id => S.some(x => x.id === id));
+      if (!ids.length) continue;
+      const sub = it.sub ? ecode(it.sub) : null;
+      items.push({ date: it.date, shiftIds: ids, leaveType: LV_TYPES.includes(it.leaveType) ? it.leaveType : "事假", subId: sub?.id || "", subName: sub?.name || "" });
+    } else {
+      for (const sh of (it.shifts || []).map(code).filter(Boolean)) if (!dayIds.includes(sh.id)) items.push({ date: it.date, shiftId: sh.id });
+    }
+  }
+  if (!items.length) return reply(env, ev, { type: "text", text: data.intent === "leave"
+    ? "收到！不過那天你好像沒有排班，或我看不出是哪一天。請直接到打卡系統的「請假」填寫，或寫清楚日期再傳一次（例如：11/19 夜訓請假）。"
+    : "收到！不過我看不出要加哪一天、哪個班。請寫清楚再傳一次（例如：11/20 迎風夜訓幫我加班）。" });
+  const kind = data.intent, reason = String(data.reason || "").slice(0, 100);
+  const id = await fs.add("lineDrafts", { empId: emp.id, name: emp.name, kind, items: JSON.stringify(items), reason, text, status: "draft", createdAt: new Date() });
+  const sig = await draftSig(env, id);
+  const SN = Object.fromEntries(shifts.map(x => [x.id, x]));
+  const md = ds => `${+ds.slice(5, 7)}/${+ds.slice(8)}（${wd(ds)}）`;
+  const rows = items.map(x => ({ type: "box", layout: "vertical", backgroundColor: "#f6f6f8", cornerRadius: "10px", paddingAll: "10px", margin: "sm", contents: kind === "leave" ? [
+    { type: "text", text: `${md(x.date)}・${x.leaveType}`, weight: "bold", size: "sm", color: "#1d1d1f" },
+    ...x.shiftIds.map(id => ({ type: "text", text: `${SN[id]?.name || ""}${SN[id]?.start ? ` ${SN[id].start}–${SN[id].end}` : ""}`, size: "xs", color: "#6e6e73", wrap: true })),
+    { type: "text", text: x.subName ? `代班：${x.subName}` : "代班：不需代班（或由管理員安排）", size: "xs", color: x.subName ? "#0068e0" : "#8e8e93", wrap: true }
+  ] : [
+    { type: "text", text: md(x.date), weight: "bold", size: "sm", color: "#1d1d1f" },
+    { type: "text", text: `${SN[x.shiftId]?.name || ""}${SN[x.shiftId]?.start ? ` ${SN[x.shiftId].start}–${SN[x.shiftId].end}` : ""}`, size: "xs", color: "#6e6e73", wrap: true }
+  ] }));
+  await reply(env, ev, { type: "flex", altText: kind === "leave" ? "幫你填好請假申請，請確認" : "幫你填好加班申請，請確認",
+    contents: { type: "bubble", size: "mega",
+      header: { type: "box", layout: "vertical", backgroundColor: kind === "leave" ? "#d70015" : "#ff9500", paddingAll: "16px", contents: [
+        { type: "text", text: kind === "leave" ? "📝 幫你填好請假申請" : "➕ 幫你填好加班申請", weight: "bold", color: "#ffffff", size: "lg" },
+        { type: "text", text: "確認內容正確再按「確認送出」", color: "#ffffffcc", size: "xs", margin: "xs" }] },
+      body: { type: "box", layout: "vertical", paddingAll: "14px", contents: [...rows,
+        ...(reason ? [{ type: "text", text: `原因：${reason}`, size: "xs", color: "#6e6e73", margin: "md", wrap: true }] : [])] },
+      footer: { type: "box", layout: "vertical", spacing: "sm", contents: [
+        { type: "button", style: "primary", color: "#1d1d1f", height: "sm", action: { type: "postback", label: "確認送出", data: `c|${id}|${sig}`, displayText: "確認送出" } },
+        { type: "box", layout: "horizontal", spacing: "sm", contents: [
+          { type: "button", style: "secondary", height: "sm", action: { type: "postback", label: "取消", data: `x|${id}|${sig}`, displayText: "取消" } },
+          { type: "button", style: "secondary", height: "sm", action: { type: "uri", label: "自己修改", uri: `${LIFF}?view=${kind === "leave" ? "leave" : "clock"}` } }] }
+      ] } } });
+}
+async function handleDraftPostback(env, ev, userId) {
+  const [act, id, sig] = String(ev.postback?.data || "").split("|");
+  if (!["c", "x"].includes(act) || !id || sig !== await draftSig(env, id)) return;
+  const fs = new Firestore(env);
+  const d = await fs.getPath(`lineDrafts/${id}`);
+  const emp = await fs.findByLineUid("line:" + userId);
+  if (!d || !emp || d.empId !== emp.id) return;
+  if (d.status !== "draft") return reply(env, ev, { type: "text", text: d.status === "sent" ? "這筆已經送出過了，等管理員審核中。" : "這筆已經取消了。" });
+  if (Date.now() - Date.parse(d.createdAt) > 24 * 3600e3) { await fs.patchPath(`lineDrafts/${id}`, { status: "expired" }); return reply(env, ev, { type: "text", text: "這筆已經超過 24 小時，請重新傳一次訊息。" }); }
+  if (act === "x") { await fs.patchPath(`lineDrafts/${id}`, { status: "cancelled" }); return reply(env, ev, { type: "text", text: "已取消，沒有送出。" }); }
+  const items = JSON.parse(d.items || "[]");
+  const SN = Object.fromEntries((await fs.list("shiftTypes")).map(x => [x.id, x]));
+  const base = { empId: emp.id, name: emp.name, empNo: emp.empNo || "", status: "pending", notified: false, createdAt: new Date(), source: "line", lineDraftId: id };
+  const made = [];
+  for (const x of items) {
+    if (d.kind === "leave") {
+      const subs = x.subId ? Object.fromEntries(x.shiftIds.map(s => [s, x.subId])) : {};
+      const subNames = x.subId ? Object.fromEntries(x.shiftIds.map(s => [s, x.subName])) : {};
+      made.push(["leaveRequests", await fs.add("leaveRequests", { ...base, date: x.date, month: x.date.slice(0, 7), shiftIds: x.shiftIds,
+        shiftNames: x.shiftIds.map(s => SN[s]?.name || ""), leaveType: x.leaveType, reason: d.reason || "", subNeed: !!x.subId, subName: x.subName || "", subs, subNames })]);
+    } else {
+      made.push(["shiftRequests", await fs.add("shiftRequests", { ...base, date: x.date, month: x.date.slice(0, 7), shiftId: x.shiftId, shiftName: SN[x.shiftId]?.name || "", reason: d.reason || "" })]);
+    }
+  }
+  await fs.patchPath(`lineDrafts/${id}`, { status: "sent", sentAt: new Date() });
+  await reply(env, ev, { type: "text", text: `✅ 已送出 ${made.length} 筆${d.kind === "leave" ? "請假" : "加班"}申請，等管理員審核。\n審核結果會在打卡系統通知你。` });
+  for (const [coll, rid] of made) await notifyNew(env, coll, rid).catch(() => {});
+}
 
 /* ---------- Firebase ID Token 驗證 ---------- */
 let fbKeys = null;
