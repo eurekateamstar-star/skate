@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=103";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=104";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -1734,7 +1734,7 @@ function drawShiftRowsDesk() {
       <td><div class="loc-pair"><label><span>上班</span><select class="s-loc">${locOpts(s.locationId || "")}</select></label>
         <label><span>下班</span><select class="s-oloc">${locOpts(s.outLocationId || "").replace("不限地點</option>", `同上班地點</option><option value="${OUT_ANY}" ${s.outLocationId === OUT_ANY ? "selected" : ""}>不限地點</option>`)}</select></label></div></td>
       <td><input class="s-color" type="color" value="${esc(s.color || "#2e9e3f")}"></td>
-      <td><button class="btn small primary s-save">儲存</button> <button class="btn small danger s-del">刪除</button></td>
+      <td><span class="s-saved hint" style="margin:0 6px 0 0"></span><button class="btn small danger s-del">刪除</button></td>
     </tr>`).join("") : `<tr><td colspan="10" class="empty">尚未建立班別</td></tr>`) + `</tbody></table>`;
   $("#shCount").textContent = `共 ${shiftTypes.length} 個班別`;
   $("#shAll").checked = false; updShSel();
@@ -1776,17 +1776,7 @@ $("#shiftList").onclick = async e => {
   if (tr) {   // 電腦版表格：直接編輯
     const id = tr.dataset.id;
     try {
-      if (e.target.classList.contains("s-save")) {
-        const data = {
-          code: $(".s-code", tr).value.trim(), cat: $(".s-cat", tr).value, name: $(".s-name", tr).value.trim(),
-          start: $(".s-start", tr).value, end: $(".s-end", tr).value,
-          locationId: $(".s-loc", tr).value || "", outLocationId: $(".s-oloc", tr).value || "", color: $(".s-color", tr).value
-        };
-        if (!data.name) return toast("名稱不可空白");
-        if ((data.start && !data.end) || (!data.start && data.end)) return toast("上班與下班時間要一起填，或都留空");
-        await updateDoc(doc(db, "shiftTypes", id), data);
-        toast(`已儲存「${data.name}」`); renderShiftList();
-      } else if (e.target.classList.contains("s-del")) {
+      if (e.target.classList.contains("s-del")) {
         if (!(await appConfirm("刪除班別", `確定刪除「${shiftMap[id]?.name}」？已排入班表的不會自動移除。`, { okText: "刪除", danger: true }))) return;
         await deleteDoc(doc(db, "shiftTypes", id)); toast("已刪除"); renderShiftList();
       }
@@ -1795,6 +1785,29 @@ $("#shiftList").onclick = async e => {
   }
   const r = e.target.closest(".sh-row"); if (r) openShift(shiftMap[r.dataset.id]);
 };
+// 電腦版表格：改了就自動儲存
+async function saveShiftRow(tr) {
+  const id = tr.dataset.id, mark = $(".s-saved", tr);
+  const data = {
+    code: $(".s-code", tr).value.trim(), cat: $(".s-cat", tr).value, name: $(".s-name", tr).value.trim(),
+    start: $(".s-start", tr).value, end: $(".s-end", tr).value,
+    locationId: $(".s-loc", tr).value || "", outLocationId: $(".s-oloc", tr).value || "", color: $(".s-color", tr).value
+  };
+  if (!data.name) return toast("名稱不可空白");
+  if ((data.start && !data.end) || (!data.start && data.end)) { if (mark) mark.textContent = "時間要成對"; return; }
+  if (mark) mark.textContent = "儲存中…";
+  try {
+    await updateDoc(doc(db, "shiftTypes", id), data);
+    if (shiftMap[id]) Object.assign(shiftMap[id], data);
+    writeCache();
+    if (mark) { mark.textContent = "✓ 已儲存"; setTimeout(() => { if (mark.textContent === "✓ 已儲存") mark.textContent = ""; }, 2000); }
+  } catch (err) { if (mark) mark.textContent = ""; toast("儲存失敗：" + errMsg(err)); }
+}
+$("#shiftList").addEventListener("change", e => {
+  if (e.target.classList.contains("s-chk")) return;
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) saveShiftRow(tr);
+});
 $("#shiftForm").onsubmit = async e => {
   e.preventDefault();
   const data = { cat: $("#shCat").value, name: $("#shName").value.trim(), start: $("#shStart").value, end: $("#shEnd").value, color: $("#shColor").value, order: Date.now() };
@@ -1809,6 +1822,8 @@ let sm = null;
 function openShift(sh) {
   sm = { s: sh };
   $("#smTitle").textContent = sh ? "編輯班別" : "新增班別";
+  $("#smSave").textContent = sh ? "完成" : "新增";
+  $("#shModal [data-close]").classList.toggle("hidden", !!sh);   // 自動儲存就不需要「取消」
   $("#smName").value = sh?.name || ""; $("#smCode").value = sh?.code || "";
   $("#smStart").value = sh?.start || ""; $("#smEnd").value = sh?.end || "";
   setSeg("#smCat", sh?.cat === "leave" ? "leave" : "shift");
@@ -1825,9 +1840,13 @@ function openShift(sh) {
   requestAnimationFrame(() => $("#shModal").classList.add("open"));
 }
 function smCatUI() { const leave = $("#smCat button.on")?.dataset.v === "leave"; $(".sm-time").classList.toggle("hidden", leave); $(".sm-loc").classList.toggle("hidden", leave); }
-function closeShiftM() { $("#shModal").classList.remove("open"); setTimeout(() => $("#shModal").classList.add("hidden"), 200); }
-$("#smCat").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { setSeg("#smCat", b.dataset.v); smCatUI(); } };
-$("#smColors").onclick = e => { const b = e.target.closest("button[data-c]"); if (!b) return; sm.color = b.dataset.c; $$("#smColors button").forEach(x => x.classList.toggle("on", x === b)); };
+function closeShiftM() {
+  if (smTimer) smAutoSave();
+  if (sm?.dirty) { sm.dirty = false; renderShiftList(); }
+  $("#shModal").classList.remove("open"); setTimeout(() => $("#shModal").classList.add("hidden"), 200);
+}
+$("#smCat").onclick = e => { const b = e.target.closest("button[data-v]"); if (b) { setSeg("#smCat", b.dataset.v); smCatUI(); smQueue(150); } };
+$("#smColors").onclick = e => { const b = e.target.closest("button[data-c]"); if (!b) return; sm.color = b.dataset.c; $$("#smColors button").forEach(x => x.classList.toggle("on", x === b)); smQueue(150); };
 $("#smColors").oninput = e => { if (e.target.id === "smColorPick") { sm.color = e.target.value; $$("#smColors button").forEach(x => x.classList.remove("on")); } };
 $("#shModal").onclick = async e => {
   if (e.target.id === "shModal" || e.target.closest("[data-close]")) return closeShiftM();
@@ -1837,18 +1856,41 @@ $("#shModal").onclick = async e => {
     catch (err) { toast("刪除失敗：" + errMsg(err)); }
   }
 };
-$("#smSave").onclick = async () => {
+function smData() {
   const leave = $("#smCat button.on")?.dataset.v === "leave";
-  const data = {
+  return {
     name: $("#smName").value.trim(), code: $("#smCode").value.trim(), cat: leave ? "leave" : "shift",
     start: leave ? "" : $("#smStart").value, end: leave ? "" : $("#smEnd").value, color: sm.color,
     locationId: leave ? "" : $("#smLoc").value, outLocationId: leave ? "" : $("#smOLoc").value
   };
+}
+// 編輯既有班別：改了就自動儲存（新增班別還是按「新增」）
+let smTimer = null, smSaving = null;
+async function smAutoSave() {
+  clearTimeout(smTimer);
+  if (!sm?.s) return;
+  const data = smData();
+  if (!data.name || (data.start && !data.end) || (!data.start && data.end)) { $("#smTitle").textContent = "編輯班別・未儲存"; return; }
+  $("#smTitle").textContent = "儲存中…";
+  smSaving = updateDoc(doc(db, "shiftTypes", sm.s.id), data).then(() => {
+    Object.assign(sm.s, data); if (shiftMap[sm.s.id]) Object.assign(shiftMap[sm.s.id], data); writeCache();
+    $("#smTitle").textContent = "✓ 已自動儲存"; sm.dirty = true;
+  }).catch(err => { $("#smTitle").textContent = "編輯班別"; toast("儲存失敗：" + errMsg(err)); });
+  await smSaving; smSaving = null;
+}
+const smQueue = (ms = 600) => { if (!sm?.s) return; clearTimeout(smTimer); $("#smTitle").textContent = "編輯中…"; smTimer = setTimeout(smAutoSave, ms); };
+$("#shModal").addEventListener("input", e => { if (e.target.closest(".modal-body")) smQueue(e.target.type === "color" ? 300 : 800); });
+$("#shModal").addEventListener("change", e => { if (e.target.closest(".modal-body")) smQueue(150); });
+$("#smSave").onclick = async () => {
+  if (sm.s) {   // 既有班別：已自動儲存，按「完成」就關閉（還沒存的先存）
+    if (smTimer) await smAutoSave(); else if (smSaving) await smSaving;
+    closeShiftM(); renderShiftList(); return;
+  }
+  const data = smData();
   if (!data.name) return toast("請輸入班別名稱");
   if ((data.start && !data.end) || (!data.start && data.end)) return toast("上班和下班時間要一起填，或都留空");
   try {
-    if (sm.s) { await updateDoc(doc(db, "shiftTypes", sm.s.id), data); toast(`已儲存「${data.name}」`); }
-    else { await addDoc(collection(db, "shiftTypes"), { ...data, order: Date.now() }); toast("已新增班別"); }
+    await addDoc(collection(db, "shiftTypes"), { ...data, order: Date.now() }); toast("已新增班別");
     closeShiftM(); renderShiftList();
   } catch (err) { toast("儲存失敗：" + errMsg(err)); }
 };
