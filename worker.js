@@ -858,7 +858,7 @@ async function push(env, to, message) {
 
 /* ---------- LINE 訊息 → AI 填申請 ---------- */
 const LV_TYPES = ["事假", "病假", "特休", "公假", "其他"];
-const ASK_RE = /請假|休假|事假|病假|喪假|婚假|特休|公假|換班|調班|代班|代課|加班|加課|支援|補班|不能去|不能來|沒辦法去|沒辦法來|無法到|上不了|請幫我排|幫我排/;
+const ASK_RE = /請假|休假|事假|病假|喪假|婚假|特休|公假|換班|調班|代班|代課|加班|加課|支援|補班|不能去|不能來|沒辦法去|沒辦法來|無法到|上不了|請幫我排|幫我排|我要加|幫我加|多加|加一|加個|要上|我要上|交通車|接送車|接送|夜訓|晨訓|加強班/;
 // 用 replyToken 回覆（免費）；token 過期才改用 push（算訊息額度）
 async function reply(env, ev, messages) {
   const msgs = Array.isArray(messages) ? messages : [messages];
@@ -894,7 +894,8 @@ async function handleAskText(env, ev, userId) {
   const add = (ds, n) => { const d = new Date(ds + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
   const W = "日一二三四五六", wd = ds => W[new Date(ds + "T00:00:00Z").getUTCDay()];
   const [shifts, emps, sch] = await Promise.all([fs.list("shiftTypes"), fs.list("employees"), fs.whereRange("schedules", "date", today, add(today, 45))]);
-  const S = shifts.filter(x => x.cat !== "leave");
+  const mm = +today.slice(5, 7);   // 暑訓只在 7、8 月、寒訓只在 1、2 月，其他月份不給 AI 選
+  const S = shifts.filter(x => x.cat !== "leave" && !(/暑訓/.test(x.name) && ![7, 8].includes(mm)) && !(/寒訓/.test(x.name) && ![1, 2].includes(mm)));
   const staff = emps.filter(e => e.active !== false && !e.dev && e.id !== emp.id);
   const LV = x => Object.fromEntries(Object.entries(x.leave || {}).filter(([k, v]) => k !== "id" && k !== "_updateTime" && v));
   const mine = sch.filter(x => x.empId === emp.id).sort((a, b) => a.date.localeCompare(b.date));
@@ -917,11 +918,15 @@ ${staff.map((e, i) => `E${i + 1}=${e.name}`).join("\n")}
 
 規則：
 - 請假、休假、不能去、換班、找人代班 → intent=leave。換班／代班就把代班的人填在 sub。
-- 加班、加課、支援、幫我排某個班 → intent=shift，shifts 填要加的班別代號。
+- 加班、加課、支援、幫我排某個班、「我要加一個夜訓」「今天的 1830 交通車」→ intent=shift，shifts 填要加的班別代號。
+- 員工常用的說法：「交通車」「接送」＝班別名稱裡的「接送車」或「交通車」；「1830」「18:30」「六點半」＝上班時間 18:30。
+  例如「1830 的交通車」→ 找名稱有接送車／交通車、而且上班時間是 18:30 的班（像 接送車去程(1830-1900)）；「2040 回程」→ 上班時間 20:40 的回程車。
+  「夜訓」「晨訓」「下午」「加強班」就找名稱有這幾個字的班；同名有好幾個時，選那個日期的星期幾適用的（名稱後面的「三五」「六日」代表星期三五、六日）。
 - 日期：「明天」「下週三」「11/19」都換成 YYYY-MM-DD（今天是 ${today}）。只寫星期幾就選今天之後最近的那天。日期區間要展開成每天一筆。
 - 請假的 shifts：有指定班別（例如 夜訓、下午）就填那個；沒指定就填他那天排的全部班。只能選他那天有排的班。
 - leaveType 沒說就用「事假」，生病用「病假」。
-- 只是聊天、問問題、看不出要請假或加班 → intent=none、items=[]。`;
+- 只是聊天、問問題、看不出要請假或加班 → intent=none、items=[]。
+- 範例：「明天我要加一個夜訓」→ intent=shift，date=明天，shifts=[迎風溜冰場(夜訓) 的代號]。「今天的1830的交通車」→ intent=shift，date=今天，shifts=[接送車去程(1830-1900) 的代號]。`;
   let data = null;
   for (const model of AI_MODELS) {
     try {
