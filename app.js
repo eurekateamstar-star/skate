@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=108";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=109";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -4582,14 +4582,25 @@ async function importPunches(list) {
   const shiftBy = {}; shiftTypes.forEach(s => shiftBy[norm(s.name)] = s);
   const locBy = {}; locations.forEach(l => locBy[norm(l.name)] = l);
 
+  // 舊系統的「由補打卡單建立」不是地點異常，改記成補打卡備註
+  list.forEach(x => { if (/補打卡/.test(x.reason || "")) { x.extra = [x.extra, x.reason].filter(Boolean).join("；"); x.reason = ""; x.makeup = true; } });
   const missEmp = [...new Set(list.filter(x => !findEmp(x)).map(x => `${x.name}(${x.empNo})`))];
   const missShift = [...new Set(list.filter(x => x.shiftName && !shiftBy[norm(x.shiftName)]).map(x => x.shiftName))];
-  const ok = list.filter(findEmp);
-  const dates = list.map(x => x.date).sort();
+  // 新系統已經有的打卡（同一人、同一天、時間相差 3 分鐘內）就略過，避免重複
+  const months = [...new Set(list.map(x => x.date.slice(0, 7)))];
+  const exist = (await Promise.all(months.map(m => getDocs(query(collection(db, "attendance"), where("month", "==", m))))))
+    .flatMap(sn => sn.docs.filter(d => !d.id.startsWith("imp_")).map(d => { const r = d.data(), t = r.ts?.toDate?.() || new Date(r.clientTime); return { empId: r.empId, date: r.date, min: t.getHours() * 60 + t.getMinutes() }; }));
+  const mins = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+  const isDup = x => { const u = findEmp(x); return u && exist.some(e => e.empId === u.id && e.date === x.date && Math.abs(e.min - mins(x.time)) <= 3); };
+  const dupN = list.filter(isDup).length;
+  const ok = list.filter(x => findEmp(x) && !isDup(x));
+  if (!ok.length) return appAlert("沒有需要匯入的紀錄", `這個檔案的 ${list.length} 筆打卡，系統裡都已經有了。`);
+  const dates = ok.map(x => x.date).sort();
   const far = ok.filter(x => x.reason).length;
   const msg = [
     `期間：${dates[0]} ~ ${dates.at(-1)}`,
-    `打卡筆數：${ok.length} 筆（上班 ${ok.filter(x => x.type === "in").length}、下班 ${ok.filter(x => x.type === "out").length}）`,
+    `要匯入：${ok.length} 筆（上班 ${ok.filter(x => x.type === "in").length}、下班 ${ok.filter(x => x.type === "out").length}）`,
+    dupN ? `系統裡已經有的 ${dupN} 筆會略過（新系統打過卡的日期）` : "",
     `員工：${new Set(ok.map(x => findEmp(x).id)).size} 位對應成功` + (missEmp.length ? `\n略過（系統中沒有）：${missEmp.join("、")}` : ""),
     missShift.length ? `班別對不到（仍會匯入，只記名稱）：${missShift.join("、")}` : "班別全部對應成功",
     far ? `含地點異常原因 ${far} 筆` : "",
@@ -4619,6 +4630,7 @@ async function importPunches(list) {
         ts: t, clientTime: t.toISOString(),
         lat: x.pos?.lat ?? null, lng: x.pos?.lng ?? null, acc: null,
         outOfRange: !!x.reason, reason: x.reason || "", note,
+        ...(x.makeup ? { makeup: true } : {}),
         imported: true, importedAt: serverTimestamp()
       });
       done++;
