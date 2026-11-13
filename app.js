@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=105";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=106";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -873,7 +873,7 @@ function renderPunchCards() {
       if (late[type]) return `<button class="btn big apply" data-makeup="${type}" data-sid="${id}"><span>補打卡</span><small>已超過${label}時間</small></button>`;
       const openAt = notOpenYet(s, type);
       // 還沒到開放時間（上班前／下班前 30 分鐘）：可以打，但要送出「提早打卡申請」給管理者核准
-      if (openAt) return `<button class="btn big apply" data-early="${type}" data-sid="${id}"><span>${label}</span><small>提早打卡・需申請</small></button>`;
+      if (openAt) return `<button class="btn big apply" data-early="${type}" data-sid="${id}"><span>${label}</span></button>`;
       if (chk.cls === "wait") return `<button class="btn big ${type}" disabled><span>${label}</span><small>定位中…</small></button>`;
       if (!chk.ok) return `<button class="btn big apply" data-punch="${type}" data-sid="${id}">
         <span>${label}</span><small>不在範圍・申請打卡</small></button>`;
