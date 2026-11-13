@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=104";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=105";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -868,11 +868,12 @@ function renderPunchCards() {
       const chk = chkOf[type];
       const req = myReqs.find(q => q.date === today && q.shiftId === id && q.type === type && q.status === "pending");
       if (r) return `<button class="btn big done" data-punch="${type}" data-sid="${id}">
-        <span>✓ 已${label}</span><small>${hm(r.t)} 打卡${r.outOfRange ? "・範圍外" : ""}${r.makeup ? "・補打卡" : ""}</small></button>`;
-      if (req) return `<button class="btn big done" disabled><span>${label}</span><small>補打卡 ${req.time}・審核中</small></button>`;
+        <span>✓ 已${label}</span><small>${hm(r.t)} 打卡${r.outOfRange ? "・範圍外" : ""}${r.makeup ? "・補打卡" : ""}${r.early ? "・提早申請" : ""}</small></button>`;
+      if (req) return `<button class="btn big done" disabled><span>${label}</span><small>${req.early ? "提早打卡" : "補打卡"} ${req.time}・審核中</small></button>`;
       if (late[type]) return `<button class="btn big apply" data-makeup="${type}" data-sid="${id}"><span>補打卡</span><small>已超過${label}時間</small></button>`;
       const openAt = notOpenYet(s, type);
-      if (openAt) return `<button class="btn big ${type}" disabled><span>${label}</span><small>${openAt} 開放打卡</small></button>`;
+      // 還沒到開放時間（上班前／下班前 30 分鐘）：可以打，但要送出「提早打卡申請」給管理者核准
+      if (openAt) return `<button class="btn big apply" data-early="${type}" data-sid="${id}"><span>${label}</span><small>提早打卡・需申請</small></button>`;
       if (chk.cls === "wait") return `<button class="btn big ${type}" disabled><span>${label}</span><small>定位中…</small></button>`;
       if (!chk.ok) return `<button class="btn big apply" data-punch="${type}" data-sid="${id}">
         <span>${label}</span><small>不在範圍・申請打卡</small></button>`;
@@ -1064,14 +1065,18 @@ async function loadMyReqs(month) {
   myReqs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 let mk = null;
-function openMakeup(sid, type, date = ymd(new Date())) {
+function openMakeup(sid, type, date = ymd(new Date()), early = false) {
   const s = shiftMap[sid];
-  mk = { sid, type, date };
+  mk = { sid, type, date, early };
   const d = new Date(date + "T00:00:00");
   $("#mkTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）${s?.name || ""}`;
+  $("#makeupModal h3").textContent = early ? "提早打卡申請" : "補打卡";
+  $("#mkType").closest(".field").classList.toggle("hidden", early);
+  $("#makeupModal .hint").textContent = early ? "提早超過 30 分鐘打卡需要申請，管理者核准後會用你填的時間記錄打卡。" : "送出後由管理者審核，核准後會自動補上打卡紀錄。";
   $$("#mkType button").forEach(b => b.classList.toggle("on", b.dataset.v === type));
-  $("#mkTime").value = (type === "in" ? s?.start : s?.end) || "";
+  $("#mkTime").value = early ? hm(new Date()) : (type === "in" ? s?.start : s?.end) || "";
   $("#mkReason").value = "";
+  $("#mkReason").placeholder = early ? (type === "in" ? "例：提早到場準備器材、幫忙開場" : "例：課程提早結束、家長提早接走") : "例：忘記打卡、手機沒電、在帶學生走不開";
   $("#makeupModal").classList.remove("hidden");
   requestAnimationFrame(() => $("#makeupModal").classList.add("open"));
 }
@@ -1088,7 +1093,7 @@ $("#makeupModal").onclick = e => { if (e.target.id === "makeupModal" || e.target
 $("#mkSubmit").onclick = async () => {
   const time = $("#mkTime").value, reason = $("#mkReason").value.trim();
   if (!time) return toast("請填寫實際的上下班時間");
-  if (reason.length < 2) return toast("請填寫補打卡原因");
+  if (reason.length < 2) return toast(mk.early ? "請填寫提早打卡的原因" : "請填寫補打卡原因");
   const s = shiftMap[mk.sid];
   if (myReqs.some(q => q.date === mk.date && q.shiftId === mk.sid && q.type === mk.type && q.status === "pending"))
     return toast("這筆已經申請過，等待審核中");
@@ -1097,11 +1102,12 @@ $("#mkSubmit").onclick = async () => {
     const ref = await addDoc(collection(db, "punchRequests"), {
       empId: me.id, name: me.name, empNo: me.empNo || "",
       date: mk.date, month: mk.date.slice(0, 7), shiftId: mk.sid, shiftName: s?.name || "",
-      type: mk.type, time, reason, status: "pending", notified: false, createdAt: serverTimestamp()
+      type: mk.type, time, reason, status: "pending", notified: false, createdAt: serverTimestamp(),
+      ...(mk.early ? { early: true } : {})
     });
-    myReqs.push({ id: ref.id, empId: me.id, date: mk.date, shiftId: mk.sid, type: mk.type, time, reason, status: "pending" });
+    myReqs.push({ id: ref.id, empId: me.id, date: mk.date, shiftId: mk.sid, type: mk.type, time, reason, status: "pending", early: !!mk.early });
     closeMakeup();
-    toast("已送出補打卡申請，等待管理者審核");
+    toast(mk.early ? "已送出提早打卡申請，等待管理者審核" : "已送出補打卡申請，等待管理者審核");
     if (!$("#view-clock").classList.contains("hidden")) renderPunchCards();
     if (!$("#view-records").classList.contains("hidden")) renderRecDay();
   } catch (err) {
@@ -1112,6 +1118,8 @@ $("#mkSubmit").onclick = async () => {
 $("#shiftPunch").onclick = e => {
   const m = e.target.closest("[data-makeup]");
   if (m) return openMakeup(m.dataset.sid, m.dataset.makeup);
+  const er = e.target.closest("[data-early]");
+  if (er) return openMakeup(er.dataset.sid, er.dataset.early, ymd(new Date()), true);
   const b = e.target.closest("[data-punch]");
   if (b && !b.disabled) punch(b.dataset.punch, b.dataset.sid);
 };
@@ -1120,7 +1128,7 @@ async function punch(type, sid) {
   const s = shiftMap[sid];
   const openAt = notOpenYet(s, type);
   if (openAt && !todayRecs.some(r => r.shiftId === sid && r.type === type))
-    return appAlert("還沒開放打卡", `「${s.name}」${type === "out" ? `下班前 ${EARLY_OUT}` : `上班前 ${EARLY_IN}`} 分鐘才能打卡，${openAt} 開放。`);
+    return openMakeup(sid, type, ymd(new Date()), true);
   const loc = locFor(s, type);
   const chk = rangeCheck(loc);
   let reason = "";
@@ -3392,7 +3400,7 @@ function renderApprovals() {
       <div class="ap-acts"><button class="btn danger" data-ap="reject">退回</button><button class="btn primary" data-ap="ok">核准並加入班表</button></div>
     </div>` : ap.tab !== "punch" ? leaveCard(q, ap.tab === "done") : `
     <div class="card ap-item" data-id="${q.id}">
-      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">補打卡</span></div>
+      <div class="ap-head"><b>${esc(q.name)}</b><span class="emp-no">${esc(q.empNo || "")}</span><span class="tag warn">${q.early ? "提早打卡" : "補打卡"}</span></div>
       <div class="ap-date">${dayLabel(q.date)}・${esc(q.shiftName)}</div>
       <div class="ap-what">${q.type === "in" ? "上班" : "下班"} <b>${esc(q.time)}</b></div>
       <div class="lv-reason">原因：${esc(q.reason)}</div>
@@ -3595,8 +3603,8 @@ $("#apList").onclick = async e => {
         empId: q.empId, name: q.name, empNo: q.empNo || "", type: q.type,
         shiftId: q.shiftId || null, shiftName: q.shiftName || "", locationId: null, dist: null,
         date: q.date, month: q.date.slice(0, 7), ts: t, clientTime: t.toISOString(),
-        lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `補打卡（${q.reason}）`,
-        makeup: true, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
+        lat: null, lng: null, acc: null, outOfRange: false, reason: "", note: `${q.early ? "提早打卡" : "補打卡"}（${q.reason}）`,
+        makeup: !q.early, early: !!q.early, imported: true, requestId: q.id, approvedBy: me.name, approvedAt: serverTimestamp()
       });
       batch.update(doc(db, "punchRequests", q.id), { status: "approved", reviewedBy: me.name, reviewedAt: serverTimestamp(), notifyEmp: "todo", seenByEmp: false });
       await batch.commit();
