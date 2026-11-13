@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=109";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=110";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -4589,9 +4589,9 @@ async function importPunches(list) {
   // 新系統已經有的打卡（同一人、同一天、時間相差 3 分鐘內）就略過，避免重複
   const months = [...new Set(list.map(x => x.date.slice(0, 7)))];
   const exist = (await Promise.all(months.map(m => getDocs(query(collection(db, "attendance"), where("month", "==", m))))))
-    .flatMap(sn => sn.docs.filter(d => !d.id.startsWith("imp_")).map(d => { const r = d.data(), t = r.ts?.toDate?.() || new Date(r.clientTime); return { empId: r.empId, date: r.date, min: t.getHours() * 60 + t.getMinutes() }; }));
+    .flatMap(sn => sn.docs.filter(d => !d.id.startsWith("imp_")).map(d => { const r = d.data(), t = r.ts?.toDate?.() || new Date(r.clientTime); return { empId: r.empId, date: r.date, type: r.type, min: t.getHours() * 60 + t.getMinutes() }; }));
   const mins = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-  const isDup = x => { const u = findEmp(x); return u && exist.some(e => e.empId === u.id && e.date === x.date && Math.abs(e.min - mins(x.time)) <= 3); };
+  const isDup = x => { const u = findEmp(x); return u && exist.some(e => e.empId === u.id && e.date === x.date && e.type === x.type && Math.abs(e.min - mins(x.time)) <= 3); };
   const dupN = list.filter(isDup).length;
   const ok = list.filter(x => findEmp(x) && !isDup(x));
   if (!ok.length) return appAlert("沒有需要匯入的紀錄", `這個檔案的 ${list.length} 筆打卡，系統裡都已經有了。`);
