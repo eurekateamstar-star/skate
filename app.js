@@ -6,7 +6,7 @@ import {
   initializeFirestore, doc, getDoc, setDoc as _setDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, addDoc as _addDoc,
   collection, query, where, getDocs, serverTimestamp, writeBatch as _writeBatch, deleteField, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=112";
+import { firebaseConfig, LIFF_ID, WORKER_URL } from "./config.js?v=113";
 
 /* 整個月的大量查詢（報表、薪資、排班）暫存 3 分鐘，省 Firestore 讀取額度；任何寫入都會清掉暫存 */
 const MEMO = new Map();
@@ -3406,12 +3406,14 @@ function leaveCard(q, done) {
       <div class="lv-shs">${(q.shiftIds || []).map((sid, i) => `<span>${esc(q.shiftNames?.[i] || shiftMap[sid]?.name || "")}${q.subNames?.[sid] ? ` → <b>${esc(q.subNames[sid])}</b> 代班` : ""}</span>`).join("")}</div>
       ${Object.keys(q.subNames || {}).length ? "" : `<div class="lv-reason">代班：${q.subNeed ? `${esc(q.subName || "有")}（員工填寫，尚未指定）` : "不需代班"}</div>`}
       ${q.reason ? `<div class="lv-reason">原因：${esc(q.reason)}</div>` : ""}
-      ${q.editedBy ? `<div class="lv-reason muted">由 ${esc(q.editedBy)} 修改</div>` : ""}
+      ${done && q.reviewedBy ? `<div class="lv-reason ap-by">✅ 核准：<b>${esc(q.reviewedBy)}</b>${q.reviewedAt?.toDate ? `・${apWhen(q.reviewedAt.toDate())}` : ""}</div>` : ""}
+      ${q.editedBy ? `<div class="lv-reason muted">由 ${esc(q.editedBy)} 修改${q.editedAt?.toDate ? `・${apWhen(q.editedAt.toDate())}` : ""}</div>` : ""}
       <div class="ap-acts">${done
         ? `<button class="btn" data-ap="edit">修改／代班</button>`
         : `<button class="btn danger" data-ap="reject">退回</button><button class="btn" data-ap="edit">修改／代班</button><button class="btn primary" data-ap="ok">核准</button>`}</div>
     </div>`;
 }
+const apWhen = d => `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 function renderApprovals() {
   $$("#apTab button").forEach(b => b.classList.toggle("on", b.dataset.v === ap.tab));
   const list = ap[ap.tab];
